@@ -1,0 +1,1813 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GGUF 解剖器｜GGUF Model Anatomist｜Tensor Roles / Layer Tree / Weight Inspector / Capability Evidence / Composition</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #172033;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --line: #334155;
+      --accent: #7dd3fc;
+      --good: #86efac;
+      --warn: #fde68a;
+      --bad: #fca5a5;
+      --chip: #1e293b;
+      --shadow: rgba(0,0,0,.25);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background: radial-gradient(circle at top left, #1f2a44 0, #0f172a 42%, #090e1a 100%);
+    }
+    a { color: var(--accent); }
+    .wrap { max-width: 1320px; margin: 0 auto; padding: 28px 18px 48px; }
+    header { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: clamp(28px, 3vw, 42px); letter-spacing: -.02em; }
+    .subtitle { margin: 0; color: var(--muted); max-width: 900px; line-height: 1.65; }
+    .drop {
+      border: 1.5px dashed #475569;
+      background: rgba(15, 23, 42, .72);
+      border-radius: 22px;
+      padding: 22px;
+      box-shadow: 0 18px 55px var(--shadow);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      margin: 18px 0;
+    }
+    .drop.drag { border-color: var(--accent); background: rgba(14, 116, 144, .18); }
+    .fileline { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    input[type="file"] { display: none; }
+    button, .filebtn, select, input[type="search"], input[type="text"], input[type="number"] {
+      border: 1px solid var(--line);
+      background: #0b1220;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    button, .filebtn { cursor: pointer; user-select: none; transition: transform .08s ease, border-color .12s ease, background .12s ease; }
+    button:hover, .filebtn:hover { border-color: var(--accent); background: #111c31; }
+    button:active, .filebtn:active { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .primary { background: linear-gradient(180deg, #0ea5e9, #0369a1); border-color: #38bdf8; color: white; font-weight: 700; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(15, 23, 42, .62); font-size: 13px; }
+    .status { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+    .bar { height: 8px; background: #0b1220; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+    .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #38bdf8, #86efac); transition: width .15s ease; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 14px; }
+    .card {
+      background: linear-gradient(180deg, rgba(17, 24, 39, .98), rgba(15, 23, 42, .96));
+      border: 1px solid rgba(51, 65, 85, .85);
+      border-radius: 18px;
+      box-shadow: 0 16px 45px var(--shadow);
+      overflow: hidden;
+    }
+    .card h2, .card h3 { margin: 0; }
+    .card-head { padding: 16px 16px 12px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .card-body { padding: 14px 16px 16px; }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-6 { grid-column: span 6; }
+    .span-4 { grid-column: span 4; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .stat { padding: 12px; background: rgba(30, 41, 59, .62); border: 1px solid rgba(51,65,85,.82); border-radius: 14px; min-height: 82px; }
+    .stat .label { color: var(--muted); font-size: 13px; }
+    .stat .value { font-size: 22px; font-weight: 800; margin-top: 6px; overflow-wrap: anywhere; }
+    .stat .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid rgba(51, 65, 85, .72); padding: 9px 8px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; z-index: 1; background: #111827; color: #cbd5e1; font-weight: 700; }
+    tr:hover td { background: rgba(14, 165, 233, .06); }
+    .scroll { max-height: 620px; overflow: auto; border: 1px solid rgba(51,65,85,.72); border-radius: 14px; }
+    .mono { font-family: var(--mono); }
+    .muted { color: var(--muted); }
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cap-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    .cap-card { padding: 13px; border: 1px solid rgba(51,65,85,.82); border-radius: 16px; background: rgba(30,41,59,.55); min-height: 132px; }
+    .cap-title { display: flex; justify-content: space-between; gap: 10px; align-items: start; font-weight: 800; }
+    .cap-score { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .cap-state { margin-top: 9px; font-weight: 800; font-size: 18px; }
+    .cap-reason { margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .confidence-high { color: var(--good); }
+    .confidence-mid { color: var(--warn); }
+    .confidence-low { color: #fed7aa; }
+    .confidence-none { color: var(--bad); }
+    .mini-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
+    .mini-stat { border: 1px solid var(--line); border-radius: 999px; padding: 6px 9px; background: rgba(15,23,42,.45); color: var(--muted); font-size: 12px; }
+    .bi { display: inline-flex; flex-direction: column; gap: 2px; line-height: 1.08; vertical-align: middle; }
+    .bi .zh { font-weight: 750; color: inherit; }
+    .bi .en { font-size: .72em; font-weight: 520; color: var(--muted); letter-spacing: .01em; }
+    h1 .bi .en { font-size: .42em; }
+    h2 .bi .en { font-size: .66em; }
+    th .bi { align-items: flex-start; }
+    .filebtn .bi, button .bi { align-items: center; }
+    .stat .label .bi .en { font-size: .82em; }
+    .small-scroll { max-height: 380px; }
+
+    .chip { background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; color: #cbd5e1; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .toolbar input[type="search"], .toolbar input[type="text"] { min-width: 220px; }
+    .toolbar input[type="number"] { width: 120px; min-width: 90px; }
+    .kv-value { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 640px; }
+    .note { color: var(--muted); line-height: 1.65; }
+    .error {
+      background: rgba(127, 29, 29, .25);
+      border: 1px solid rgba(252,165,165,.45);
+      color: #fecaca;
+      border-radius: 14px;
+      padding: 12px;
+      margin-top: 12px;
+      white-space: pre-wrap;
+    }
+    .hidden { display: none !important; }
+    canvas { width: 100%; height: 230px; display: block; background: rgba(15,23,42,.55); border: 1px solid rgba(51,65,85,.72); border-radius: 14px; }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .composition-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .composition-card { padding: 13px; border: 1px solid rgba(51,65,85,.82); border-radius: 16px; background: rgba(30,41,59,.55); min-height: 128px; }
+    .composition-title { display: flex; justify-content: space-between; gap: 10px; align-items: start; font-weight: 800; }
+    .composition-state { margin-top: 8px; font-weight: 800; }
+    .composition-desc { margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .role-badge { display: inline-flex; flex-direction: column; gap: 2px; border: 1px solid rgba(51,65,85,.82); border-radius: 10px; padding: 5px 7px; background: rgba(15,23,42,.45); min-width: 130px; }
+    .role-badge .role-main { font-weight: 800; color: #e5e7eb; }
+    .role-badge .role-sub { color: var(--muted); font-size: 11px; }
+    .tree-panel { border: 1px solid rgba(51,65,85,.72); border-radius: 14px; background: rgba(15,23,42,.45); padding: 10px 12px; max-height: 680px; overflow: auto; }
+    .tree-root { display: grid; gap: 10px; }
+    .tree-node { border-left: 2px solid rgba(125,211,252,.35); padding-left: 12px; }
+    .tree-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .tree-title { font-weight: 850; }
+    .tree-meta { color: var(--muted); font-size: 12px; }
+    .tree-children { margin-top: 8px; display: grid; gap: 7px; }
+    .evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .evidence-box { border: 1px solid rgba(51,65,85,.72); border-radius: 14px; padding: 10px; background: rgba(15,23,42,.45); min-height: 120px; }
+    .evidence-box h4 { margin: 0 0 8px; }
+    .evidence-list { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.55; }
+
+
+    .weight-layout { display: grid; grid-template-columns: minmax(280px, 420px) 1fr; gap: 12px; align-items: start; }
+    .weight-controls { border: 1px solid rgba(51,65,85,.72); border-radius: 14px; padding: 12px; background: rgba(15,23,42,.45); display: grid; gap: 10px; }
+    .control-row { display: grid; gap: 5px; }
+    .control-row label { color: var(--muted); font-size: 12px; }
+    .control-row select, .control-row input { width: 100%; }
+    .weight-panel { border: 1px solid rgba(51,65,85,.72); border-radius: 14px; background: rgba(15,23,42,.45); padding: 12px; min-height: 280px; }
+    .weight-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .weight-stat { border: 1px solid rgba(51,65,85,.72); border-radius: 12px; padding: 8px; background: rgba(30,41,59,.48); }
+    .weight-stat .k { color: var(--muted); font-size: 11px; }
+    .weight-stat .v { margin-top: 3px; font-family: var(--mono); overflow-wrap: anywhere; }
+    .hex-dump, .numeric-preview { white-space: pre; overflow: auto; max-height: 360px; border: 1px solid rgba(51,65,85,.72); border-radius: 12px; padding: 10px; background: #050a14; font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+    .preview-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
+    .preview-tabs button { padding: 7px 10px; font-size: 12px; }
+    .preview-tabs button.active { border-color: var(--accent); background: rgba(14,165,233,.18); }
+    .tiny-btn { padding: 6px 8px; border-radius: 9px; font-size: 12px; }
+    .layer-pick-btn { margin-left: 6px; }
+
+    details { border: 1px solid rgba(51,65,85,.72); border-radius: 14px; padding: 10px 12px; background: rgba(15,23,42,.45); }
+    summary { cursor: pointer; font-weight: 700; }
+    @media (max-width: 980px) {
+      .drop { grid-template-columns: 1fr; }
+      .span-8, .span-6, .span-4 { grid-column: span 12; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .cap-grid { grid-template-columns: repeat(2, 1fr); }
+      .composition-grid { grid-template-columns: repeat(2, 1fr); }
+      .two-col, .evidence-grid, .weight-layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .stats { grid-template-columns: 1fr; }
+      .cap-grid { grid-template-columns: 1fr; }
+      .composition-grid { grid-template-columns: 1fr; }
+      .toolbar input[type="search"], .toolbar input[type="text"] { width: 100%; min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1><span class="bi"><span class="zh">GGUF 模型解剖器</span><span class="en">GGUF Model Anatomist</span></span></h1>
+      <p class="subtitle">離線檢視 GGUF 模型的組成：Header、Metadata、Tensor Infos、Layers / Blocks、Tensor Role、局部權重資料、量化型別分布，以及文字、圖片、影片、聲音、文生圖能力的啟發式掃描。檔案只在你的瀏覽器本機解析，不會上傳。</p>
+    </header>
+
+    <section id="drop" class="drop">
+      <div>
+        <div class="fileline">
+          <label class="filebtn primary" for="fileInput"><span class="bi"><span class="zh">選擇 .gguf 檔</span><span class="en">Choose .gguf file</span></span></label>
+          <input id="fileInput" type="file" accept=".gguf,application/octet-stream" />
+          <span id="fileName" class="pill">尚未選擇檔案</span>
+          <span class="pill">支援 GGUF v2 / v3；v1 盡力解析</span>
+        </div>
+        <div class="bar"><div id="progressBar"></div></div>
+        <div id="status" class="status" style="margin-top:8px">等待檔案...</div>
+        <div id="errorBox" class="error hidden"></div>
+      </div>
+      <div class="toolbar">
+        <button id="exportJsonBtn" disabled><span class="bi"><span class="zh">匯出 JSON 摘要</span><span class="en">Export JSON summary</span></span></button>
+        <button id="exportTensorCsvBtn" disabled><span class="bi"><span class="zh">匯出 Tensor CSV</span><span class="en">Export tensor CSV</span></span></button>
+        <button id="exportMetaCsvBtn" disabled><span class="bi"><span class="zh">匯出 Metadata CSV</span><span class="en">Export metadata CSV</span></span></button>
+        <button id="exportScanJsonBtn" disabled><span class="bi"><span class="zh">匯出能力掃描 JSON</span><span class="en">Export capability scan JSON</span></span></button>
+      </div>
+    </section>
+
+    <main id="result" class="grid hidden">
+      <section class="card span-12">
+        <div class="card-head"><h2><span class="bi"><span class="zh">總覽</span><span class="en">Overview</span></span></h2><span id="parseTime" class="pill"></span></div>
+        <div class="card-body">
+          <div class="stats" id="summaryStats"></div>
+          <div class="chips" id="keyChips" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <section class="card span-8">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Tensor 型別分布</span><span class="en">Tensor type distribution</span></span></h2>
+          <span class="pill">以資料區 offset 差估算大小</span>
+        </div>
+        <div class="card-body">
+          <canvas id="typeChart" width="900" height="260"></canvas>
+        </div>
+      </section>
+
+      <section class="card span-4">
+        <div class="card-head"><h2><span class="bi"><span class="zh">可能的模型資訊</span><span class="en">Likely model information</span></span></h2></div>
+        <div class="card-body">
+          <table id="modelInfoTable"></table>
+        </div>
+      </section>
+
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">模型能力掃描</span><span class="en">Model capability scan</span></span></h2>
+          <span class="pill">根據 metadata + tensor 命名推斷；不是實際跑推論</span>
+        </div>
+        <div class="card-body">
+          <div id="capabilityCards" class="cap-grid"></div>
+          <div class="mini-stats" id="capabilitySummary"></div>
+          <div class="scroll small-scroll"><table id="capabilityTable"></table></div>
+        </div>
+      </section>
+
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">模型組成判定</span><span class="en">Model composition verdict</span></span></h2>
+          <span class="pill">判斷這個 GGUF 像是完整模型、主模型、projector，或 pipeline 元件</span>
+        </div>
+        <div class="card-body">
+          <div id="compositionCards" class="composition-grid"></div>
+          <div class="mini-stats" id="compositionSummary"></div>
+          <div class="scroll small-scroll"><table id="compositionTable"></table></div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Layer 結構圖</span><span class="en">Layer structure tree</span></span></h2>
+          <div class="toolbar">
+            <input id="layerTreeSearch" type="search" placeholder="搜尋 layer tree｜Search layer tree, e.g. blk.0, attn_q, ffn_gate" />
+            <select id="layerTreeGroupFilter"><option value="">全部 group / All groups</option></select>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="tree-panel"><div id="layerTree" class="tree-root"></div></div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Layers / Blocks 分析</span><span class="en">Layers / Blocks analysis</span></span></h2>
+          <div class="toolbar">
+            <input id="layerSearch" type="search" placeholder="搜尋 layer / component｜Search layer / component, e.g. blk.10, vision, ffn, attn" />
+            <select id="layerGroupFilter"><option value="">全部 group / All groups</option></select>
+            <select id="layerSort">
+              <option value="index">Layer 順序 / Layer order</option>
+              <option value="bytes_desc">大小：大 → 小 / Size: large to small</option>
+              <option value="tensors_desc">Tensor 數：多 → 少 / Tensor count: high to low</option>
+              <option value="group">Group / Namespace</option>
+            </select>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="mini-stats" id="layerSummary"></div>
+          <div class="scroll"><table id="layerTable"></table></div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Metadata 中繼資料</span><span class="en">Metadata</span></span></h2>
+          <div class="toolbar">
+            <input id="metaSearch" type="search" placeholder="搜尋 key / value｜Search key / value, e.g. tokenizer, context, rope" />
+            <select id="metaTypeFilter"><option value="">全部型別 / All types</option></select>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="scroll"><table id="metadataTable"></table></div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Tensor 權重資料檢視器</span><span class="en">Tensor weight data inspector</span></span></h2>
+          <span class="pill">只讀取選中 tensor 的局部資料；大型模型不會整檔載入記憶體</span>
+        </div>
+        <div class="card-body">
+          <div class="weight-layout">
+            <div class="weight-controls">
+              <div class="control-row">
+                <label><span class="bi"><span class="zh">選擇 Layer / Group</span><span class="en">Choose layer / group</span></span></label>
+                <select id="weightLayerSelect"><option value="">尚未解析檔案 / No file parsed</option></select>
+              </div>
+              <div class="control-row">
+                <label><span class="bi"><span class="zh">選擇 Tensor</span><span class="en">Choose tensor</span></span></label>
+                <select id="weightTensorSelect"><option value="">請先選 layer / Choose a layer first</option></select>
+              </div>
+              <div class="control-row">
+                <label><span class="bi"><span class="zh">讀取位元組上限</span><span class="en">Byte preview limit</span></span></label>
+                <input id="weightByteLimit" type="number" min="64" max="67108864" step="1024" value="65536" />
+              </div>
+              <div class="control-row">
+                <label><span class="bi"><span class="zh">Tensor 內位移</span><span class="en">In-tensor byte offset</span></span></label>
+                <input id="weightByteOffset" type="number" min="0" step="1" value="0" />
+              </div>
+              <div class="control-row">
+                <label><span class="bi"><span class="zh">數值預覽上限</span><span class="en">Numeric preview count</span></span></label>
+                <input id="weightValueLimit" type="number" min="8" max="4096" step="8" value="128" />
+              </div>
+              <button id="loadWeightBtn" class="primary"><span class="bi"><span class="zh">展開選中 tensor 權重</span><span class="en">Expand selected tensor weights</span></span></button>
+              <button id="clearWeightBtn"><span class="bi"><span class="zh">清空檢視</span><span class="en">Clear viewer</span></span></button>
+              <div class="note">量化 tensor 會先顯示 raw bytes；目前支援 F32、F16、BF16、I8/U8/I16/U16/I32/U32、Q8_0、Q4_0、Q4_1 的數值預覽。其他 IQ/K/NVFP4/MXFP4 類型仍以原始區塊資料為主。為避免瀏覽器卡死，單次讀取上限放寬到 64 MiB，Hex dump 只渲染前 2048 行；可用 Tensor 內位移讀取同一 tensor 的不同片段。</div>
+            </div>
+            <div class="weight-panel">
+              <div id="weightTensorMeta" class="weight-grid"></div>
+              <div id="weightWarnings" class="mini-stats"></div>
+              <div class="preview-tabs">
+                <button id="showNumericBtn" class="active" disabled><span class="bi"><span class="zh">數值預覽</span><span class="en">Numeric preview</span></span></button>
+                <button id="showHexBtn" disabled><span class="bi"><span class="zh">Hex dump</span><span class="en">Hex dump</span></span></button>
+                <button id="copyWeightBtn" disabled><span class="bi"><span class="zh">複製目前內容</span><span class="en">Copy current view</span></span></button>
+              </div>
+              <pre id="weightNumeric" class="numeric-preview">尚未展開 tensor。你可以從 layer 下拉選單或 Tensor 表格的「展開」按鈕挑選。</pre>
+              <pre id="weightHex" class="hex-dump hidden"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head">
+          <h2><span class="bi"><span class="zh">Tensors 張量</span><span class="en">Tensors</span></span></h2>
+          <div class="toolbar">
+            <input id="tensorSearch" type="search" placeholder="搜尋 tensor｜Search tensor, e.g. blk.0, attn, ffn, token" />
+            <select id="tensorTypeFilter"><option value="">全部型別 / All types</option></select>
+            <select id="tensorSort">
+              <option value="index">原始順序 / Original order</option>
+              <option value="bytes_desc">大小：大 → 小 / Size: large to small</option>
+              <option value="bytes_asc">大小：小 → 大 / Size: small to large</option>
+              <option value="type">型別 / Type</option>
+              <option value="name">名稱 / Name</option>
+            </select>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="scroll"><table id="tensorTable"></table></div>
+        </div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head"><h2><span class="bi"><span class="zh">檢查說明與限制</span><span class="en">Inspection notes and limitations</span></span></h2></div>
+        <div class="card-body note">
+          <details open>
+            <summary><span class="bi"><span class="zh">這個解析器看得到什麼？</span><span class="en">What can this inspector show?</span></span></summary>
+            <p>它讀取 GGUF 的 header、metadata key-value，以及 tensor info 區塊。新版也可以按需展開單一 tensor 的局部實際權重 bytes，並對 F32/F16/BF16、常見整數型別、Q8_0、Q4_0、Q4_1 做數值預覽；大型 tensor 不會整個載入。tensor role、layer tree、能力證據鏈、模型組成判定仍屬於靜態啟發式鑑識，不等於實際推論測試。</p>
+          </details>
+          <br />
+          <details>
+            <summary><span class="bi"><span class="zh">為什麼 tensor 大小是「估算」？</span><span class="en">Why are tensor sizes estimated?</span></span></summary>
+            <p>GGUF tensor info 記錄的是每個 tensor 在 tensor data blob 內的 offset。這裡用下一個 tensor offset 或檔案結尾反推區段大小；通常足夠判斷組成比例，但可能包含 padding。若要做 byte-level 驗證，仍應用 llama.cpp / gguf-py / ggml 官方工具交叉確認。</p>
+          </details>
+          <br />
+          <details>
+            <summary><span class="bi"><span class="zh">常見盲點</span><span class="en">Common pitfalls</span></span></summary>
+            <p>看到 general.file_type 或檔名寫 Q4_K_M，不代表每個 tensor 都是同一種型別。很多 GGUF 會混用 F32/F16/BF16 與量化 tensor；真正組成要看 tensor list 與型別統計。</p>
+          </details>
+        </div>
+      </section>
+    </main>
+  </div>
+
+<script>
+'use strict';
+
+const GGUF_TYPES = {
+  0: 'UINT8', 1: 'INT8', 2: 'UINT16', 3: 'INT16', 4: 'UINT32', 5: 'INT32', 6: 'FLOAT32',
+  7: 'BOOL', 8: 'STRING', 9: 'ARRAY', 10: 'UINT64', 11: 'INT64', 12: 'FLOAT64'
+};
+
+const GGML_TYPES = {
+  0: 'F32', 1: 'F16', 2: 'Q4_0', 3: 'Q4_1', 4: 'Q4_2_removed', 5: 'Q4_3_removed',
+  6: 'Q5_0', 7: 'Q5_1', 8: 'Q8_0', 9: 'Q8_1', 10: 'Q2_K', 11: 'Q3_K', 12: 'Q4_K',
+  13: 'Q5_K', 14: 'Q6_K', 15: 'Q8_K', 16: 'IQ2_XXS', 17: 'IQ2_XS', 18: 'IQ3_XXS',
+  19: 'IQ1_S', 20: 'IQ4_NL', 21: 'IQ3_S', 22: 'IQ2_S', 23: 'IQ4_XS', 24: 'I8',
+  25: 'I16', 26: 'I32', 27: 'I64', 28: 'F64', 29: 'IQ1_M', 30: 'BF16',
+  31: 'Q4_0_4_4_removed', 32: 'Q4_0_4_8_removed', 33: 'Q4_0_8_8_removed',
+  34: 'TQ1_0', 35: 'TQ2_0', 36: 'IQ4_NL_4_4_reserved', 37: 'IQ4_NL_4_8_reserved',
+  38: 'IQ4_NL_8_8_reserved', 39: 'MXFP4', 40: 'NVFP4', 41: 'Q1_0'
+};
+
+const FTYPE_NAMES = {
+  '-1': 'UNKNOWN', 0: 'ALL_F32', 1: 'MOSTLY_F16', 2: 'MOSTLY_Q4_0', 3: 'MOSTLY_Q4_1',
+  4: 'MOSTLY_Q4_1_SOME_F16', 7: 'MOSTLY_Q8_0', 8: 'MOSTLY_Q5_0', 9: 'MOSTLY_Q5_1',
+  10: 'MOSTLY_Q2_K', 11: 'MOSTLY_Q3_K', 12: 'MOSTLY_Q4_K', 13: 'MOSTLY_Q5_K',
+  14: 'MOSTLY_Q6_K', 15: 'MOSTLY_IQ2_XXS', 16: 'MOSTLY_IQ2_XS', 17: 'MOSTLY_IQ3_XXS',
+  18: 'MOSTLY_IQ1_S', 19: 'MOSTLY_IQ4_NL', 20: 'MOSTLY_IQ3_S', 21: 'MOSTLY_IQ2_S',
+  22: 'MOSTLY_IQ4_XS', 23: 'MOSTLY_IQ1_M', 24: 'MOSTLY_BF16', 25: 'MOSTLY_MXFP4',
+  26: 'MOSTLY_NVFP4', 27: 'MOSTLY_Q1_0'
+};
+
+const $ = (id) => document.getElementById(id);
+function biLabel(zh, en) {
+  return `<span class="bi"><span class="zh">${escapeHtml(zh)}</span><span class="en">${escapeHtml(en)}</span></span>`;
+}
+const textDecoder = new TextDecoder('utf-8', { fatal: false });
+let lastResult = null;
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  const units = ['B','KB','MB','GB','TB','PB'];
+  let n = Math.abs(bytes), u = 0;
+  while (n >= 1024 && u < units.length - 1) { n /= 1024; u++; }
+  const sign = bytes < 0 ? '-' : '';
+  return `${sign}${n >= 100 || u === 0 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)} ${units[u]}`;
+}
+
+function formatInt(n) {
+  if (typeof n === 'bigint') return n.toString();
+  if (typeof n !== 'number' || !Number.isFinite(n)) return String(n ?? '');
+  return new Intl.NumberFormat('en-US').format(n);
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
+
+function downloadText(filename, content, mime='text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function csvEscape(v) {
+  const s = String(v ?? '');
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function clampInt(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function float16ToNumber(h) {
+  const s = (h & 0x8000) ? -1 : 1;
+  const e = (h >> 10) & 0x1f;
+  const f = h & 0x03ff;
+  if (e === 0) return s * Math.pow(2, -14) * (f / 1024);
+  if (e === 0x1f) return f ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + f / 1024);
+}
+
+function bf16ToNumber(b) {
+  const buf = new ArrayBuffer(4);
+  const u = new Uint32Array(buf);
+  const f = new Float32Array(buf);
+  u[0] = (b & 0xffff) << 16;
+  return f[0];
+}
+
+function formatNumberPreview(x) {
+  if (Number.isNaN(x)) return 'NaN';
+  if (!Number.isFinite(x)) return String(x);
+  const ax = Math.abs(x);
+  if (ax !== 0 && (ax < 1e-4 || ax >= 1e5)) return x.toExponential(6);
+  return Number(x.toFixed(8)).toString();
+}
+
+function tensorLayerKey(t) {
+  const m = layerMatch(t.name);
+  return m ? `${m.group}:${m.layer}` : '__ungrouped__';
+}
+
+function getTensorsForLayerKey(r, key) {
+  if (!r) return [];
+  if (!key || key === '__all__') return r.tensors;
+  return r.tensors.filter(t => tensorLayerKey(t) === key);
+}
+
+function hexDump(bytes, absoluteStart = 0, bytesPerLine = 16, maxLines = 2048) {
+  const lines = [];
+  const totalLines = Math.ceil(bytes.length / bytesPerLine);
+  const lineLimit = Math.min(totalLines, maxLines);
+  for (let line = 0; line < lineLimit; line++) {
+    const i = line * bytesPerLine;
+    const chunk = bytes.slice(i, i + bytesPerLine);
+    const addr = (absoluteStart + i).toString(16).padStart(12, '0');
+    const hex = [...chunk].map(b => b.toString(16).padStart(2, '0')).join(' ').padEnd(bytesPerLine * 3 - 1, ' ');
+    const ascii = [...chunk].map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+    lines.push(`${addr}  ${hex}  |${ascii}|`);
+  }
+  if (totalLines > lineLimit) {
+    const hiddenBytes = bytes.length - lineLimit * bytesPerLine;
+    lines.push(`... Hex dump truncated: rendered ${lineLimit} / ${totalLines} lines, hidden ${formatBytes(hiddenBytes)} ...`);
+  }
+  return lines.join('\n');
+}
+
+function bytesToDataView(bytes) {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+function decodeWeightPreview(t, bytes, valueLimit) {
+  const type = String(t.typeName || '').toUpperCase();
+  const little = lastResult?.header?.endian !== 'big';
+  const dv = bytesToDataView(bytes);
+  const values = [];
+  const push = (v) => { if (values.length < valueLimit) values.push(v); };
+  const maxByBytes = (stride) => Math.min(valueLimit, Math.floor(bytes.length / stride));
+  let mode = type;
+  let note = '';
+
+  if (type === 'F32') {
+    for (let i = 0; i < maxByBytes(4); i++) push(dv.getFloat32(i * 4, little));
+    note = 'F32：直接以 32-bit float 解碼。';
+  } else if (type === 'F16') {
+    for (let i = 0; i < maxByBytes(2); i++) push(float16ToNumber(dv.getUint16(i * 2, little)));
+    note = 'F16：以 IEEE 754 half 解碼。';
+  } else if (type === 'BF16') {
+    for (let i = 0; i < maxByBytes(2); i++) push(bf16ToNumber(dv.getUint16(i * 2, little)));
+    note = 'BF16：把 16-bit brain float 放回 float32 高位後預覽。';
+  } else if (type === 'I8') {
+    for (let i = 0; i < Math.min(valueLimit, bytes.length); i++) push(dv.getInt8(i));
+    note = 'I8：直接以 signed int8 顯示。';
+  } else if (type === 'U8') {
+    for (let i = 0; i < Math.min(valueLimit, bytes.length); i++) push(dv.getUint8(i));
+    note = 'U8：直接以 unsigned int8 顯示。';
+  } else if (type === 'I16') {
+    for (let i = 0; i < maxByBytes(2); i++) push(dv.getInt16(i * 2, little));
+    note = 'I16：直接以 signed int16 顯示。';
+  } else if (type === 'U16') {
+    for (let i = 0; i < maxByBytes(2); i++) push(dv.getUint16(i * 2, little));
+    note = 'U16：直接以 unsigned int16 顯示。';
+  } else if (type === 'I32') {
+    for (let i = 0; i < maxByBytes(4); i++) push(dv.getInt32(i * 4, little));
+    note = 'I32：直接以 signed int32 顯示。';
+  } else if (type === 'U32') {
+    for (let i = 0; i < maxByBytes(4); i++) push(dv.getUint32(i * 4, little));
+    note = 'U32：直接以 unsigned int32 顯示。';
+  } else if (type === 'Q8_0') {
+    const blockSize = 2 + 32;
+    const blocks = Math.floor(bytes.length / blockSize);
+    for (let b = 0; b < blocks && values.length < valueLimit; b++) {
+      const base = b * blockSize;
+      const d = float16ToNumber(dv.getUint16(base, little));
+      for (let j = 0; j < 32 && values.length < valueLimit; j++) push(d * dv.getInt8(base + 2 + j));
+    }
+    note = `Q8_0：以 block(d:F16 + 32×int8) 粗略反量化預覽；已讀 ${blocks} 個完整 block。`;
+  } else if (type === 'Q4_0') {
+    const blockSize = 2 + 16;
+    const blocks = Math.floor(bytes.length / blockSize);
+    for (let b = 0; b < blocks && values.length < valueLimit; b++) {
+      const base = b * blockSize;
+      const d = float16ToNumber(dv.getUint16(base, little));
+      for (let j = 0; j < 16 && values.length < valueLimit; j++) {
+        const q = dv.getUint8(base + 2 + j);
+        push(d * ((q & 0x0f) - 8));
+        if (values.length < valueLimit) push(d * ((q >> 4) - 8));
+      }
+    }
+    note = `Q4_0：以 block(d:F16 + 16 packed nibbles) 粗略反量化預覽；已讀 ${blocks} 個完整 block。`;
+  } else if (type === 'Q4_1') {
+    const blockSize = 2 + 2 + 16;
+    const blocks = Math.floor(bytes.length / blockSize);
+    for (let b = 0; b < blocks && values.length < valueLimit; b++) {
+      const base = b * blockSize;
+      const d = float16ToNumber(dv.getUint16(base, little));
+      const m = float16ToNumber(dv.getUint16(base + 2, little));
+      for (let j = 0; j < 16 && values.length < valueLimit; j++) {
+        const q = dv.getUint8(base + 4 + j);
+        push(m + d * (q & 0x0f));
+        if (values.length < valueLimit) push(m + d * (q >> 4));
+      }
+    }
+    note = `Q4_1：以 block(d:F16 + m:F16 + 16 packed nibbles) 粗略反量化預覽；已讀 ${blocks} 個完整 block。`;
+  } else {
+    mode = 'RAW BYTES';
+    const n = Math.min(valueLimit, bytes.length);
+    for (let i = 0; i < n; i++) push(bytes[i]);
+    note = `${type} 目前未實作完整反量化；以下是 raw byte 十進位預覽，不是模型實際浮點權重。`;
+  }
+
+  const lines = [];
+  lines.push(`Decode mode: ${mode}`);
+  lines.push(`Note: ${note}`);
+  lines.push(`Values shown: ${formatInt(values.length)} / requested ${formatInt(valueLimit)}`);
+  lines.push('');
+  const perLine = 8;
+  for (let i = 0; i < values.length; i += perLine) {
+    const chunk = values.slice(i, i + perLine).map(v => typeof v === 'number' ? formatNumberPreview(v) : String(v));
+    lines.push(`${String(i).padStart(6, ' ')}: ${chunk.join(', ')}`);
+  }
+  return { text: lines.join('\n'), mode, note, valuesShown: values.length };
+}
+
+let currentWeightView = 'numeric';
+
+function setWeightView(view) {
+  currentWeightView = view;
+  const numeric = $('weightNumeric');
+  const hex = $('weightHex');
+  if (!numeric || !hex) return;
+  const showNum = view === 'numeric';
+  numeric.classList.toggle('hidden', !showNum);
+  hex.classList.toggle('hidden', showNum);
+  $('showNumericBtn')?.classList.toggle('active', showNum);
+  $('showHexBtn')?.classList.toggle('active', !showNum);
+}
+
+function renderWeightMeta(t, readBytes=0, inTensorOffset=0) {
+  const fields = [
+    ['Tensor', 'Tensor', t.name],
+    ['角色', 'Role', `${t.role?.zh || '未知'} / ${t.role?.en || 'Unknown'}`],
+    ['形狀', 'Shape', t.shape],
+    ['型別', 'Type', t.typeName],
+    ['元素數', 'Elements', formatInt(t.elements)],
+    ['區段大小', 'Segment bytes', formatBytes(t.bytes || 0)],
+    ['Tensor 內位移', 'In-tensor offset', formatBytes(inTensorOffset)],
+    ['讀取大小', 'Bytes read', formatBytes(readBytes)],
+    ['絕對偏移', 'Absolute offset', formatInt(t.absoluteOffset + inTensorOffset)]
+  ];
+  $('weightTensorMeta').innerHTML = fields.map(([zh,en,v]) => `<div class="weight-stat"><div class="k">${biLabel(zh,en)}</div><div class="v">${escapeHtml(v)}</div></div>`).join('');
+}
+
+function populateWeightLayerSelect(r) {
+  const sel = $('weightLayerSelect');
+  if (!sel) return;
+  const groups = r.layerScan?.rows || [];
+  const opts = [`<option value="__all__">全部 tensors / All tensors (${formatInt(r.tensors.length)})</option>`];
+  for (const g of groups) opts.push(`<option value="${escapeHtml(g.key)}">${escapeHtml(g.group)}.${g.layer} — ${formatInt(g.count)} tensors — ${formatBytes(g.bytes)}</option>`);
+  const ungrouped = r.tensors.filter(t => tensorLayerKey(t) === '__ungrouped__').length;
+  if (ungrouped) opts.push(`<option value="__ungrouped__">未分組 tensors / Ungrouped tensors (${formatInt(ungrouped)})</option>`);
+  sel.innerHTML = opts.join('');
+}
+
+function populateWeightTensorSelect(r, layerKey) {
+  const sel = $('weightTensorSelect');
+  if (!sel) return;
+  const tensors = getTensorsForLayerKey(r, layerKey).slice().sort((a,b) => a.index - b.index);
+  sel.innerHTML = tensors.length ? tensors.map(t => `<option value="${t.index}">#${t.index} ${escapeHtml(t.name)} ｜ ${escapeHtml(t.typeName)} ｜ ${formatBytes(t.bytes || 0)}</option>`).join('') : '<option value="">沒有 tensor / No tensor</option>';
+}
+
+function renderWeightInspector(r) {
+  populateWeightLayerSelect(r);
+  populateWeightTensorSelect(r, $('weightLayerSelect')?.value || '__all__');
+  $('weightTensorMeta').innerHTML = '';
+  $('weightWarnings').innerHTML = '<span class="mini-stat">尚未展開權重 / No tensor expanded</span>';
+  $('weightNumeric').textContent = '尚未展開 tensor。你可以從 layer 下拉選單或 Tensor 表格的「展開」按鈕挑選。';
+  $('weightHex').textContent = '';
+  $('showNumericBtn').disabled = true;
+  $('showHexBtn').disabled = true;
+  $('copyWeightBtn').disabled = true;
+  setWeightView('numeric');
+}
+
+function selectWeightTensor(tensorIndex) {
+  if (!lastResult) return;
+  const t = lastResult.tensors.find(x => x.index === Number(tensorIndex));
+  if (!t) return;
+  const key = tensorLayerKey(t);
+  $('weightLayerSelect').value = key;
+  populateWeightTensorSelect(lastResult, key);
+  $('weightTensorSelect').value = String(t.index);
+  document.getElementById('weightLayerSelect')?.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function loadSelectedWeightTensor() {
+  if (!lastResult) return;
+  const idx = Number($('weightTensorSelect').value);
+  const t = lastResult.tensors.find(x => x.index === idx);
+  if (!t) return;
+  const byteLimit = clampInt($('weightByteLimit').value, 64, 64 * 1024 * 1024, 65536);
+  const maxTensorOffset = Math.max(0, (t.bytes || 0) - 1);
+  const inTensorOffset = clampInt($('weightByteOffset')?.value || 0, 0, maxTensorOffset, 0);
+  const valueLimit = clampInt($('weightValueLimit').value, 8, 4096, 128);
+  const absoluteReadOffset = t.absoluteOffset + inTensorOffset;
+  const remainingTensorBytes = Math.max(0, (t.bytes || 0) - inTensorOffset);
+  const readBytes = Math.min(byteLimit, remainingTensorBytes, Math.max(0, lastResult.file.size - absoluteReadOffset));
+  renderWeightMeta(t, readBytes, inTensorOffset);
+  if (readBytes <= 0) {
+    $('weightWarnings').innerHTML = '<span class="mini-stat">此 tensor 沒有可讀資料區段 / No readable segment</span>';
+    return;
+  }
+  $('weightWarnings').innerHTML = '<span class="mini-stat">讀取中 / Reading...</span>';
+  const blob = lastResult._sourceFile || null;
+  if (!blob) {
+    $('weightWarnings').innerHTML = '<span class="mini-stat">找不到原始 File 物件 / Source File object missing</span>';
+    return;
+  }
+  const ab = await blob.slice(absoluteReadOffset, absoluteReadOffset + readBytes).arrayBuffer();
+  const bytes = new Uint8Array(ab);
+  const decoded = decodeWeightPreview(t, bytes, valueLimit);
+  $('weightNumeric').textContent = decoded.text;
+  $('weightHex').textContent = hexDump(bytes, absoluteReadOffset);
+  const trunc = (t.bytes || 0) > readBytes;
+  const warnings = [
+    `解碼模式：${decoded.mode}`,
+    `已讀 ${formatBytes(readBytes)} / tensor 區段 ${formatBytes(t.bytes || 0)}，起始位移 ${formatBytes(inTensorOffset)}`,
+    trunc ? '只讀取局部資料，非完整 tensor；可提高讀取位元組上限，但不建議一次讀取數百 MB 以上' : '已讀完整 tensor 區段',
+    readBytes > 32 * 1024 ? 'Hex dump 為避免卡頓，只渲染前 2048 行；數值預覽仍受數值預覽上限控制' : '', 
+    /^(IQ|Q2_|Q3_|Q4_K|Q5_|Q6_|Q8_K|TQ|MXFP|NVFP)/i.test(t.typeName) && !['Q4_0','Q4_1','Q8_0'].includes(t.typeName) ? '此量化型別尚未完整反量化，請看 raw bytes / block data' : ''
+  ].filter(Boolean);
+  $('weightWarnings').innerHTML = warnings.map(w => `<span class="mini-stat">${escapeHtml(w)}</span>`).join('');
+  $('showNumericBtn').disabled = false;
+  $('showHexBtn').disabled = false;
+  $('copyWeightBtn').disabled = false;
+  setWeightView('numeric');
+}
+
+
+class BinaryReader {
+  constructor(file, littleEndian = true) {
+    this.file = file;
+    this.offset = 0;
+    this.littleEndian = littleEndian;
+    this.cacheStart = 0;
+    this.cacheEnd = 0;
+    this.cache = null;
+    this.chunkSize = 4 * 1024 * 1024;
+  }
+  setEndian(littleEndian) { this.littleEndian = littleEndian; }
+  tell() { return this.offset; }
+  seek(pos) {
+    if (!Number.isSafeInteger(pos) || pos < 0 || pos > this.file.size) throw new Error(`seek 位置異常：${pos}`);
+    this.offset = pos;
+  }
+  async ensure(n) {
+    if (this.offset + n > this.file.size) throw new Error(`讀取超出檔案結尾：offset=${this.offset}, need=${n}, file=${this.file.size}`);
+    if (this.cache && this.offset >= this.cacheStart && this.offset + n <= this.cacheEnd) return;
+    const start = this.offset;
+    const size = Math.max(n, this.chunkSize);
+    const end = Math.min(this.file.size, start + size);
+    this.cache = await this.file.slice(start, end).arrayBuffer();
+    this.cacheStart = start;
+    this.cacheEnd = end;
+  }
+  async view(n) {
+    await this.ensure(n);
+    return new DataView(this.cache, this.offset - this.cacheStart, n);
+  }
+  async bytes(n) {
+    await this.ensure(n);
+    const out = new Uint8Array(this.cache, this.offset - this.cacheStart, n);
+    this.offset += n;
+    return out;
+  }
+  async u8() { const v = (await this.view(1)).getUint8(0); this.offset += 1; return v; }
+  async i8() { const v = (await this.view(1)).getInt8(0); this.offset += 1; return v; }
+  async u16() { const v = (await this.view(2)).getUint16(0, this.littleEndian); this.offset += 2; return v; }
+  async i16() { const v = (await this.view(2)).getInt16(0, this.littleEndian); this.offset += 2; return v; }
+  async u32() { const v = (await this.view(4)).getUint32(0, this.littleEndian); this.offset += 4; return v; }
+  async i32() { const v = (await this.view(4)).getInt32(0, this.littleEndian); this.offset += 4; return v; }
+  async f32() { const v = (await this.view(4)).getFloat32(0, this.littleEndian); this.offset += 4; return v; }
+  async f64() { const v = (await this.view(8)).getFloat64(0, this.littleEndian); this.offset += 8; return v; }
+  async u64big() { const v = (await this.view(8)).getBigUint64(0, this.littleEndian); this.offset += 8; return v; }
+  async i64big() { const v = (await this.view(8)).getBigInt64(0, this.littleEndian); this.offset += 8; return v; }
+  async u64(label='uint64') {
+    const v = await this.u64big();
+    if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${label} 超過 JavaScript 安全整數範圍：${v.toString()}`);
+    return Number(v);
+  }
+  async i64(label='int64') {
+    const v = await this.i64big();
+    if (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER)) return v.toString();
+    return Number(v);
+  }
+  async string(maxDecodeBytes = 4 * 1024 * 1024) {
+    const len = await this.u64('string length');
+    if (len > this.file.size - this.offset) throw new Error(`字串長度異常：${len} bytes at ${this.offset}`);
+    if (len > maxDecodeBytes) {
+      const previewLen = Math.min(4096, len);
+      const preview = textDecoder.decode(await this.bytes(previewLen));
+      this.seek(this.offset + (len - previewLen));
+      return `${preview}\n…[string truncated: ${formatBytes(len)}]`;
+    }
+    const b = await this.bytes(len);
+    return textDecoder.decode(b);
+  }
+}
+
+function fixedTypeSize(type) {
+  switch (type) {
+    case 0: case 1: case 7: return 1;
+    case 2: case 3: return 2;
+    case 4: case 5: case 6: return 4;
+    case 10: case 11: case 12: return 8;
+    default: return null;
+  }
+}
+
+async function readPrimitive(reader, type) {
+  switch (type) {
+    case 0: return await reader.u8();
+    case 1: return await reader.i8();
+    case 2: return await reader.u16();
+    case 3: return await reader.i16();
+    case 4: return await reader.u32();
+    case 5: return await reader.i32();
+    case 6: return await reader.f32();
+    case 7: return (await reader.i8()) !== 0;
+    case 8: return await reader.string();
+    case 10: return await reader.u64big();
+    case 11: return await reader.i64big();
+    case 12: return await reader.f64();
+    default: throw new Error(`不支援的 metadata primitive type=${type}`);
+  }
+}
+
+function stringifyValue(v) {
+  if (typeof v === 'bigint') return v.toString();
+  if (Array.isArray(v)) return JSON.stringify(v, (_, x) => typeof x === 'bigint' ? x.toString() : x);
+  if (typeof v === 'object' && v !== null) return JSON.stringify(v, (_, x) => typeof x === 'bigint' ? x.toString() : x);
+  return String(v);
+}
+
+async function readValue(reader, type, key, progressCb) {
+  if (type !== 9) {
+    const raw = await readPrimitive(reader, type);
+    return { raw, display: stringifyValue(raw), typeName: GGUF_TYPES[type] ?? `TYPE_${type}` };
+  }
+
+  const elemType = await reader.u32();
+  const count = await reader.u64('array count');
+  const elemTypeName = GGUF_TYPES[elemType] ?? `TYPE_${elemType}`;
+  const previewLimit = 24;
+  const preview = [];
+
+  if (elemType === 9) throw new Error(`不支援 nested array：key=${key}`);
+
+  if (elemType === 8) {
+    for (let i = 0; i < count; i++) {
+      if (i < previewLimit) preview.push(await reader.string(256 * 1024));
+      else {
+        const len = await reader.u64('array string length');
+        if (len > reader.file.size - reader.tell()) throw new Error(`array string 長度異常：key=${key}, index=${i}, len=${len}`);
+        reader.seek(reader.tell() + len);
+      }
+      if (progressCb && i % 2048 === 0) progressCb(`讀取大型字串陣列：${key} ${formatInt(i)} / ${formatInt(count)}`);
+    }
+  } else {
+    const fixed = fixedTypeSize(elemType);
+    if (fixed == null) throw new Error(`不支援的 array element type=${elemType} key=${key}`);
+    const nPreview = Math.min(count, previewLimit);
+    for (let i = 0; i < nPreview; i++) preview.push(await readPrimitive(reader, elemType));
+    const remaining = count - nPreview;
+    if (remaining > 0) reader.seek(reader.tell() + remaining * fixed);
+  }
+
+  const displayPreview = preview.map(x => typeof x === 'string' ? JSON.stringify(x.length > 120 ? x.slice(0, 120) + '…' : x) : stringifyValue(x)).join(', ');
+  return {
+    raw: { arrayType: elemTypeName, count, preview },
+    display: `[${elemTypeName}; ${formatInt(count)}] ${displayPreview}${count > preview.length ? ', …' : ''}`,
+    typeName: `ARRAY<${elemTypeName}>`,
+    arrayType: elemTypeName,
+    arrayCount: count
+  };
+}
+
+function alignOffset(offset, alignment) {
+  return offset + (alignment - (offset % alignment)) % alignment;
+}
+
+function metadataLookup(metadata) {
+  const m = new Map();
+  for (const kv of metadata) m.set(kv.key, kv);
+  return (key) => m.get(key)?.raw;
+}
+
+async function parseGGUF(file, onProgress) {
+  const t0 = performance.now();
+  const reader = new BinaryReader(file, true);
+  const magicBytes = await reader.bytes(4);
+  const magic = String.fromCharCode(...magicBytes);
+  if (magic !== 'GGUF') throw new Error(`不是 GGUF 檔案：magic=${JSON.stringify(magic)}，預期 "GGUF"`);
+
+  const versionOffset = reader.tell();
+  const versionRaw = await reader.bytes(4);
+  const versionView = new DataView(versionRaw.buffer, versionRaw.byteOffset, 4);
+  const versionLE = versionView.getUint32(0, true);
+  const versionBE = versionView.getUint32(0, false);
+  const littleEndian = versionLE >= 1 && versionLE <= 20 ? true : (versionBE >= 1 && versionBE <= 20 ? false : true);
+  const version = littleEndian ? versionLE : versionBE;
+  reader.setEndian(littleEndian);
+  reader.seek(versionOffset + 4);
+
+  let tensorCount, metadataCount;
+  if (version === 1) {
+    metadataCount = await reader.u64('metadata_kv_count');
+    tensorCount = await reader.u64('tensor_count');
+  } else {
+    tensorCount = await reader.u64('tensor_count');
+    metadataCount = await reader.u64('metadata_kv_count');
+  }
+
+  onProgress(`Header 完成：tensors=${formatInt(tensorCount)}, metadata=${formatInt(metadataCount)}`, 6);
+
+  const metadata = [];
+  for (let i = 0; i < metadataCount; i++) {
+    const key = await reader.string(1024 * 1024);
+    const type = await reader.u32();
+    const val = await readValue(reader, type, key, (msg) => onProgress(msg, 6 + 42 * (i / Math.max(1, metadataCount))));
+    metadata.push({ index: i, key, type, typeName: val.typeName, raw: val.raw, display: val.display, arrayType: val.arrayType, arrayCount: val.arrayCount });
+    if (i % 16 === 0 || i === metadataCount - 1) onProgress(`讀取 metadata：${formatInt(i + 1)} / ${formatInt(metadataCount)}`, 6 + 42 * ((i + 1) / Math.max(1, metadataCount)));
+  }
+
+  const getMeta = metadataLookup(metadata);
+  const alignmentRaw = getMeta('general.alignment');
+  const alignment = typeof alignmentRaw === 'number' && alignmentRaw > 0 ? alignmentRaw : 32;
+
+  const tensors = [];
+  for (let i = 0; i < tensorCount; i++) {
+    const name = await reader.string(1024 * 1024);
+    const nDimensions = await reader.u32();
+    const dimensions = [];
+    for (let d = 0; d < nDimensions; d++) dimensions.push(await reader.u64(`tensor dimension ${name}[${d}]`));
+    const type = await reader.u32();
+    const offset = await reader.u64(`tensor offset ${name}`);
+    const elements = dimensions.reduce((a, b) => a * b, 1);
+    tensors.push({ index: i, name, nDimensions, dimensions, shape: dimensions.join(' × '), type, typeName: GGML_TYPES[type] ?? `GGML_TYPE_${type}`, offset, elements });
+    if (i % 128 === 0 || i === tensorCount - 1) onProgress(`讀取 tensor info：${formatInt(i + 1)} / ${formatInt(tensorCount)}`, 48 + 38 * ((i + 1) / Math.max(1, tensorCount)));
+  }
+
+  const tensorInfoEnd = reader.tell();
+  const tensorDataStart = alignOffset(tensorInfoEnd, alignment);
+  const paddingBytes = tensorDataStart - tensorInfoEnd;
+
+  const sortedByOffset = tensors.slice().sort((a, b) => a.offset - b.offset);
+  for (let i = 0; i < sortedByOffset.length; i++) {
+    const cur = sortedByOffset[i];
+    const nextOffset = i + 1 < sortedByOffset.length ? sortedByOffset[i + 1].offset : Math.max(0, file.size - tensorDataStart);
+    const bytes = Math.max(0, nextOffset - cur.offset);
+    cur.bytes = bytes;
+    cur.absoluteOffset = tensorDataStart + cur.offset;
+    cur.bitsPerElementApprox = cur.elements > 0 ? (bytes * 8 / cur.elements) : 0;
+  }
+
+  for (const t of tensors) t.role = classifyTensorRole(t.name);
+
+  const typeStatsMap = new Map();
+  let tensorBytes = 0;
+  let totalElements = 0;
+  for (const t of tensors) {
+    const s = typeStatsMap.get(t.typeName) ?? { typeName: t.typeName, count: 0, bytes: 0, elements: 0 };
+    s.count += 1;
+    s.bytes += t.bytes ?? 0;
+    s.elements += t.elements ?? 0;
+    typeStatsMap.set(t.typeName, s);
+    tensorBytes += t.bytes ?? 0;
+    totalElements += t.elements ?? 0;
+  }
+  const typeStats = [...typeStatsMap.values()].sort((a, b) => b.bytes - a.bytes);
+  const t1 = performance.now();
+  onProgress('解析完成', 100);
+
+  const baseResult = {
+    file: { name: file.name, size: file.size, lastModified: file.lastModified },
+    header: { magic, version, endian: littleEndian ? 'little' : 'big', tensorCount, metadataCount, alignment, tensorInfoEnd, tensorDataStart, paddingBytes },
+    metadata, tensors, typeStats,
+    derived: { tensorBytes, totalElements, metadataBytes: tensorInfoEnd, overheadBytes: tensorDataStart, parseMs: t1 - t0 },
+    warnings: buildWarnings({version, littleEndian, metadata, tensors, file, tensorDataStart, typeStats})
+  };
+  baseResult.layerScan = analyzeLayers(baseResult);
+  baseResult.capabilityScan = scanCapabilities(baseResult);
+  baseResult.capabilityEvidenceChains = buildCapabilityEvidenceChains(baseResult.capabilityScan);
+  baseResult.tensorRoleStats = analyzeTensorRoles(baseResult);
+  baseResult.modelComposition = analyzeModelComposition(baseResult);
+  return baseResult;
+}
+
+function buildWarnings(r) {
+  const warnings = [];
+  if (r.version !== 3) warnings.push(`GGUF version=${r.version}。目前主流為 v3；舊版/非典型檔案可能有解析差異。`);
+  if (!r.littleEndian) warnings.push('偵測為 big-endian GGUF。這類檔案較少見；若結果怪異，請用官方工具交叉確認。');
+  const badOffsets = r.tensors.filter(t => t.absoluteOffset > r.file.size || t.offset < 0);
+  if (badOffsets.length) warnings.push(`有 ${badOffsets.length} 個 tensor offset 超出檔案範圍。`);
+  const removedTypes = r.typeStats.filter(s => /removed|reserved/i.test(s.typeName)).map(s => s.typeName);
+  if (removedTypes.length) warnings.push(`出現已移除或保留的 ggml type：${removedTypes.join(', ')}。`);
+  return warnings;
+}
+
+
+function classifyTensorRole(name) {
+  const n = String(name || '');
+  const rules = [
+    { re: /(?:^|\.)(token_embd|tok_embeddings|embed_tokens|wte|word_embeddings)\.weight$/i, category: 'text.embedding', zh: '文字嵌入', en: 'Token embedding', confidence: 0.95, reason: '常見文字 token embedding 權重名稱' },
+    { re: /(?:^|\.)(output|lm_head|embed_out)\.weight$/i, category: 'text.output', zh: '文字輸出頭', en: 'LM head / output', confidence: 0.90, reason: '常見 logits 輸出投影權重名稱' },
+    { re: /(attn|attention).*(_q|\.q_|q_proj|query|wq)/i, category: 'attention.q', zh: '注意力 Q 投影', en: 'Attention Q projection', confidence: 0.88, reason: '名稱命中 query / q projection' },
+    { re: /(attn|attention).*(_k|\.k_|k_proj|key|wk)/i, category: 'attention.k', zh: '注意力 K 投影', en: 'Attention K projection', confidence: 0.88, reason: '名稱命中 key / k projection' },
+    { re: /(attn|attention).*(_v|\.v_|v_proj|value|wv)/i, category: 'attention.v', zh: '注意力 V 投影', en: 'Attention V projection', confidence: 0.88, reason: '名稱命中 value / v projection' },
+    { re: /(attn|attention).*(_o|out_proj|o_proj|wo|output)/i, category: 'attention.o', zh: '注意力輸出投影', en: 'Attention output projection', confidence: 0.86, reason: '名稱命中 attention output projection' },
+    { re: /(ffn|feed_forward|mlp).*gate/i, category: 'ffn.gate', zh: 'FFN 門控投影', en: 'FFN gate projection', confidence: 0.90, reason: '名稱命中 ffn/mlp gate' },
+    { re: /(ffn|feed_forward|mlp).*(up|fc1|w1)/i, category: 'ffn.up', zh: 'FFN 升維投影', en: 'FFN up projection', confidence: 0.84, reason: '名稱命中 ffn/mlp up/fc1/w1' },
+    { re: /(ffn|feed_forward|mlp).*(down|fc2|w2)/i, category: 'ffn.down', zh: 'FFN 降維投影', en: 'FFN down projection', confidence: 0.84, reason: '名稱命中 ffn/mlp down/fc2/w2' },
+    { re: /(input_layernorm|post_attention_layernorm|attn_norm|ffn_norm|norm|ln_)/i, category: 'normalization', zh: '正規化層', en: 'Normalization', confidence: 0.78, reason: '名稱命中 norm / layernorm' },
+    { re: /(rope|rotary|freqs)/i, category: 'position.rope', zh: '位置編碼 / RoPE', en: 'Position / RoPE', confidence: 0.72, reason: '名稱命中 rope / rotary' },
+    { re: /(patch[_\.-]?emb|vision.*embed|visual.*embed|image.*embed|img_in|x_embedder)/i, category: 'vision.embedding', zh: '視覺 patch 嵌入', en: 'Vision patch embedding', confidence: 0.82, reason: '名稱命中 vision/image patch embedding' },
+    { re: /(vision|visual|clip|siglip|v\.blk|vision_tower)/i, category: 'vision.encoder', zh: '視覺編碼器', en: 'Vision encoder', confidence: 0.72, reason: '名稱含 vision / visual / CLIP / SigLIP' },
+    { re: /(mmproj|multi_modal.*projector|multimodal.*projector|vision.*projector|projector)/i, category: 'multimodal.projector', zh: '多模態投影器', en: 'Multimodal projector', confidence: 0.82, reason: '名稱命中 mmproj/projector' },
+    { re: /(audio|speech|whisper|mel|conformer|acoustic|audio_encoder|a\.blk|conv_subsample)/i, category: 'audio.encoder', zh: '音訊編碼器', en: 'Audio encoder', confidence: 0.76, reason: '名稱命中 audio/speech/whisper/mel/conformer' },
+    { re: /(double_blocks\.|single_blocks\.|mmdit|dit|diffusion|denoiser|time_in|vector_in|img_in|txt_in|final_layer)/i, category: 'diffusion.transformer', zh: 'Diffusion Transformer', en: 'Diffusion transformer', confidence: 0.82, reason: '名稱像 Flux/DiT/MMDiT/diffusion transformer' },
+    { re: /(unet|input_blocks\.|middle_block\.|output_blocks\.|diffusion_model)/i, category: 'diffusion.unet', zh: 'UNet / Diffusion 區塊', en: 'UNet / diffusion block', confidence: 0.80, reason: '名稱命中 UNet / input-middle-output blocks' },
+    { re: /(vae|first_stage_model|decoder|encoder)/i, category: 'autoencoder.vae', zh: 'VAE / 編解碼器', en: 'VAE / autoencoder', confidence: 0.58, reason: '名稱命中 VAE/encoder/decoder；可能也只是一般 seq2seq encoder/decoder' },
+    { re: /(conv|conv1d|conv2d)/i, category: 'convolution', zh: '卷積層', en: 'Convolution', confidence: 0.56, reason: '名稱命中 conv' }
+  ];
+  for (const r of rules) if (r.re.test(n)) return { category: r.category, zh: r.zh, en: r.en, confidence: r.confidence, reason: r.reason };
+  return { category: 'unknown', zh: '未知 / 未分類', en: 'Unknown / unclassified', confidence: 0.10, reason: '名稱沒有命中已知結構規則' };
+}
+
+function analyzeTensorRoles(r) {
+  const map = new Map();
+  for (const t of r.tensors) {
+    const role = t.role || classifyTensorRole(t.name);
+    const cur = map.get(role.category) || { category: role.category, zh: role.zh, en: role.en, count: 0, bytes: 0, examples: [] };
+    cur.count += 1;
+    cur.bytes += t.bytes || 0;
+    if (cur.examples.length < 5) cur.examples.push(t.name);
+    map.set(role.category, cur);
+  }
+  return [...map.values()].sort((a,b) => b.bytes - a.bytes || b.count - a.count);
+}
+
+function hasTensor(r, re) { return r.tensors.some(t => re.test(t.name)); }
+function sampleTensors(r, re, limit=4) {
+  const out = [];
+  for (const t of r.tensors) { if (re.test(t.name)) out.push(t.name); re.lastIndex = 0; if (out.length >= limit) break; }
+  return out;
+}
+function hasMeta(r, re) { return r.metadata.some(kv => re.test(kv.key) || re.test(String(kv.display))); }
+function sampleMeta(r, re, limit=4) {
+  const out = [];
+  for (const kv of r.metadata) { const hit = `${kv.key}=${String(kv.display).slice(0, 120)}`; if (re.test(hit)) out.push(hit); re.lastIndex = 0; if (out.length >= limit) break; }
+  return out;
+}
+function compositionState(score) {
+  if (score >= 0.75) return { zh: '高度像', en: 'strong match', cls: 'confidence-high' };
+  if (score >= 0.45) return { zh: '可能是', en: 'possible match', cls: 'confidence-mid' };
+  if (score >= 0.20) return { zh: '弱線索', en: 'weak signal', cls: 'confidence-low' };
+  return { zh: '未見證據', en: 'no clear signal', cls: 'confidence-none' };
+}
+function makeComposition(id, zh, en, desc) { return { id, zh, en, desc, score: 0, evidence: [], missing: [], caveat: '' }; }
+function compAdd(c, condition, score, source, hit, reason) { if (!condition) return; c.score += score; c.evidence.push({ source, hit, reason, weight: score }); }
+function compMissing(c, condition, text) { if (condition) c.missing.push(text); }
+
+function analyzeModelComposition(r) {
+  const get = metadataLookup(r.metadata);
+  const arch = String(get('general.architecture') ?? '').toLowerCase();
+  const name = String(get('general.name') ?? get('general.basename') ?? r.file.name ?? '').toLowerCase();
+  const comps = [
+    makeComposition('pure_text_llm', '純文字 LLM', 'Pure text LLM', '以文字 token、transformer blocks、LM head 為主，沒有明顯多模態元件。'),
+    makeComposition('llm_backbone', 'LLM 主模型 / Backbone', 'LLM backbone', '有一般語言模型 backbone，可作為 chat/base/instruct 或多模態後端。'),
+    makeComposition('vision_projector', '視覺 Projector / mmproj', 'Vision projector / mmproj', '把 vision encoder 表徵轉成 LLM 可接收的 token/embedding。'),
+    makeComposition('vision_encoder', '視覺 Encoder', 'Vision encoder', 'CLIP/SigLIP/vision tower 類圖像編碼器。'),
+    makeComposition('audio_encoder', '音訊 Encoder / ASR', 'Audio encoder / ASR', 'Whisper/conformer/mel/audio tower 類音訊前端。'),
+    makeComposition('diffusion_transformer', 'Diffusion Transformer / DiT', 'Diffusion transformer / DiT', 'Flux/MMDiT/DiT 類生成圖片主體。'),
+    makeComposition('unet', 'UNet / SD diffusion core', 'UNet / SD diffusion core', 'Stable Diffusion 典型 UNet 元件。'),
+    makeComposition('vae', 'VAE / Autoencoder', 'VAE / autoencoder', '文生圖 pipeline 的影像壓縮/解碼元件，或一般編解碼器。'),
+    makeComposition('text_encoder', '文生圖 Text Encoder', 'Text encoder for image generation', 'CLIP/T5/文本條件編碼器，可能是文生圖 pipeline 的文字端。'),
+    makeComposition('incomplete_pipeline', '不完整 Pipeline 元件', 'Incomplete pipeline component', '像是某個元件，而不是可獨立完成任務的完整 pipeline。')
+  ];
+  const C = Object.fromEntries(comps.map(c => [c.id, c]));
+  const textBlocks = sampleTensors(r, /(^|\n?)(blk|layers|model\.layers|transformer\.h)\.\d+\./i, 5);
+  const tokenEmb = sampleTensors(r, /(token_embd|embed_tokens|tok_embeddings|wte|lm_head|output\.weight)/i, 5);
+  const visionProj = sampleTensors(r, /(mmproj|multi_modal.*projector|multimodal.*projector|vision.*projector|projector)/i, 5);
+  const visionEnc = sampleTensors(r, /(v\.blk|vision|visual|vision_tower|clip|siglip|patch[_\.-]?emb)/i, 5);
+  const audioEnc = sampleTensors(r, /(audio|speech|whisper|mel|conformer|audio_encoder|a\.blk|conv_subsample)/i, 5);
+  const dit = sampleTensors(r, /(double_blocks\.|single_blocks\.|mmdit|dit|time_in|vector_in|img_in|txt_in|final_layer|diffusion)/i, 5);
+  const unet = sampleTensors(r, /(unet|input_blocks\.|middle_block\.|output_blocks\.|diffusion_model)/i, 5);
+  const vae = sampleTensors(r, /(vae|first_stage_model|decoder|encoder)/i, 5);
+  const textEnc = sampleTensors(r, /(text_model|text_encoder|clip.*text|t5|cond_stage_model|txt_in)/i, 5);
+  const tokenizer = get('tokenizer.ggml.model');
+  const blockCount = arch ? get(`${arch}.block_count`) : undefined;
+  const multimodalStrong = visionProj.length || visionEnc.length || audioEnc.length || dit.length || unet.length;
+
+  compAdd(C.llm_backbone, tokenizer !== undefined, 0.25, 'metadata', 'tokenizer.ggml.model', '有 tokenizer metadata');
+  compAdd(C.llm_backbone, blockCount !== undefined, 0.25, 'metadata', `${arch}.block_count=${blockCount}`, '有架構 block_count');
+  compAdd(C.llm_backbone, textBlocks.length > 0, 0.35, 'tensor', textBlocks.join(' | '), '有一般 LLM block tensor');
+  compAdd(C.llm_backbone, tokenEmb.length > 0, 0.15, 'tensor', tokenEmb.join(' | '), '有 token embedding 或 output tensor');
+  C.llm_backbone.caveat = '是 base、chat、instruct，仍要看 chat_template、模型卡與實測。';
+
+  compAdd(C.pure_text_llm, C.llm_backbone.score >= 0.65, 0.60, 'derived', 'LLM backbone evidence', '文字 backbone 證據足夠');
+  compAdd(C.pure_text_llm, !multimodalStrong, 0.30, 'negative signal', 'no obvious multimodal/diffusion tensors', '未看到明顯視覺、聲音或 diffusion tensor');
+  compMissing(C.pure_text_llm, !!multimodalStrong, '有多模態或 diffusion 線索，所以不能稱為「純文字」');
+  C.pure_text_llm.caveat = '「純文字」只是未掃到多模態證據；不是保證模型完全沒有外部 projector workflow。';
+
+  compAdd(C.vision_projector, visionProj.length > 0, 0.70, 'tensor', visionProj.join(' | '), '找到 projector/mmproj 類 tensor');
+  compAdd(C.vision_projector, /mmproj|projector/.test(name), 0.25, 'filename/name', name, '檔名或模型名含 projector/mmproj');
+  compMissing(C.vision_projector, visionProj.length === 0, '未看到 mmproj/projector tensor');
+  C.vision_projector.caveat = 'projector 通常不是完整 VLM；需要搭配 LLM 主模型與 vision encoder/runtime。';
+
+  compAdd(C.vision_encoder, visionEnc.length > 0, 0.60, 'tensor', visionEnc.join(' | '), '找到 vision/CLIP/SigLIP/patch embedding 線索');
+  compAdd(C.vision_encoder, hasMeta(r, /(vision|visual|clip|siglip|image)/i), 0.25, 'metadata', sampleMeta(r, /(vision|visual|clip|siglip|image)/i, 2).join(' | '), 'metadata 含視覺鍵值');
+  compAdd(C.vision_encoder, /(vision|visual|clip|siglip|vl|llava|internvl|pixtral)/i.test(`${arch} ${name}`), 0.20, 'name/architecture', `${arch} ${name}`, '名稱或架構含視覺模型線索');
+  C.vision_encoder.caveat = '有 vision encoder 不等於單檔能 chat with image；仍需 projector 和 runtime 封裝。';
+
+  compAdd(C.audio_encoder, audioEnc.length > 0, 0.65, 'tensor', audioEnc.join(' | '), '找到 audio/speech/Whisper/mel/conformer tensor');
+  compAdd(C.audio_encoder, hasMeta(r, /(audio|speech|asr|whisper)/i), 0.25, 'metadata', sampleMeta(r, /(audio|speech|asr|whisper)/i, 2).join(' | '), 'metadata 含音訊鍵值');
+  compAdd(C.audio_encoder, /(audio|speech|asr|whisper|voxtral|omni)/i.test(`${arch} ${name}`), 0.20, 'name/architecture', `${arch} ${name}`, '名稱或架構含音訊模型線索');
+  C.audio_encoder.caveat = '聲音模型通常高度依賴前處理、取樣率、feature extractor 與 runtime。';
+
+  compAdd(C.diffusion_transformer, dit.length > 0, 0.65, 'tensor', dit.join(' | '), '找到 Flux/DiT/MMDiT/diffusion transformer 線索');
+  compAdd(C.diffusion_transformer, /(flux|dit|mmdit|diffusion|qwen.*image)/i.test(`${arch} ${name}`), 0.30, 'name/architecture', `${arch} ${name}`, '名稱或架構含 diffusion/Flux/DiT 線索');
+  C.diffusion_transformer.caveat = '通常只是文生圖 pipeline 主體，仍需 text encoder、VAE、scheduler 等。';
+
+  compAdd(C.unet, unet.length > 0, 0.75, 'tensor', unet.join(' | '), '找到 Stable Diffusion UNet 常見區塊');
+  compAdd(C.unet, /(unet|stable.*diffusion|sdxl|sd\d)/i.test(`${arch} ${name}`), 0.20, 'name/architecture', `${arch} ${name}`, '名稱或架構含 UNet/SD 線索');
+  C.unet.caveat = 'UNet 不能單獨文生圖；還需要文字條件、VAE 與 sampler。';
+
+  compAdd(C.vae, vae.length > 0 && /(vae|first_stage_model)/i.test(vae.join(' ')), 0.65, 'tensor', vae.join(' | '), '找到 VAE/first_stage_model 強線索');
+  compAdd(C.vae, /vae/i.test(`${arch} ${name}`), 0.25, 'name/architecture', `${arch} ${name}`, '名稱或架構含 VAE');
+  compAdd(C.vae, vae.length > 0 && C.vae.score < 0.2, 0.15, 'tensor', vae.join(' | '), '只有 encoder/decoder 弱線索');
+  C.vae.caveat = 'encoder/decoder 字樣可能來自其他模型，VAE 判定要看更多 metadata。';
+
+  compAdd(C.text_encoder, textEnc.length > 0, 0.50, 'tensor', textEnc.join(' | '), '找到 text encoder / CLIP text / T5 / conditioning 線索');
+  compAdd(C.text_encoder, /(clip|t5|text.*encoder|cond_stage)/i.test(`${arch} ${name}`), 0.30, 'name/architecture', `${arch} ${name}`, '名稱或架構含文字條件編碼器線索');
+  C.text_encoder.caveat = '它可能是一般文字 encoder，也可能是文生圖 pipeline 的 text encoder。';
+
+  const componentScores = [C.vision_projector, C.vision_encoder, C.audio_encoder, C.diffusion_transformer, C.unet, C.vae, C.text_encoder].filter(x => x.score >= 0.45);
+  compAdd(C.incomplete_pipeline, componentScores.length > 0 && C.llm_backbone.score < 0.65, 0.35, 'derived', componentScores.map(x => x.zh).join('、'), '有元件線索但不像完整 LLM 主模型');
+  compAdd(C.incomplete_pipeline, (C.diffusion_transformer.score >= 0.45 || C.unet.score >= 0.45) && (C.vae.score < 0.45 || C.text_encoder.score < 0.45), 0.35, 'derived', 'image-generation component without full companions', '像文生圖元件，但缺少完整 pipeline 其他關鍵元件');
+  compAdd(C.incomplete_pipeline, C.vision_projector.score >= 0.45 && C.llm_backbone.score < 0.45, 0.25, 'derived', 'projector without LLM backbone', '像 projector，但不包含完整 LLM');
+  C.incomplete_pipeline.caveat = '這不是缺陷；很多 GGUF 本來就會被拆成多個檔案配合 runtime 使用。';
+
+  for (const c of comps) {
+    c.score = Math.min(1, c.score);
+    c.state = compositionState(c.score);
+    c.evidence = uniqueEvidence(c.evidence).sort((a,b) => b.weight - a.weight);
+  }
+  const top = comps.filter(c => c.score >= 0.2).sort((a,b) => b.score - a.score);
+  const summary = [];
+  if (top[0]) summary.push(`最像：${top[0].zh} / ${top[0].en} (${Math.round(top[0].score * 100)}%)`);
+  if (componentScores.length) summary.push(`偵測到元件：${componentScores.map(x => x.zh).join('、')}`);
+  if (!componentScores.length && C.llm_backbone.score >= 0.65) summary.push('未看到明顯多模態或文生圖元件，較像文字 LLM。');
+  return { components: comps, top, summary };
+}
+
+function buildCapabilityEvidenceChains(scan) {
+  if (!scan) return [];
+  return scan.caps.map(c => {
+    const positives = c.evidence.map(e => `${e.source}: ${e.hit}（${e.reason}，+${e.weight.toFixed(2)}）`);
+    const gaps = [];
+    if (c.id === 'vision') {
+      if (!c.evidence.some(e => /projector|mmproj/i.test(`${e.hit} ${e.reason}`))) gaps.push('未明確看到 mmproj/projector，不宜直接斷言可吃圖片。');
+      if (!c.evidence.some(e => /vision|visual|clip|siglip|patch/i.test(`${e.hit} ${e.reason}`))) gaps.push('未看到 vision encoder / patch embedding 強證據。');
+    } else if (c.id === 'video') {
+      if (!c.evidence.some(e => /temporal|frame|video|motion/i.test(`${e.hit} ${e.reason}`))) gaps.push('未看到 temporal/frame/video tensor，不能把圖片 VLM 直接當影片模型。');
+    } else if (c.id === 'audio') {
+      if (!c.evidence.some(e => /audio|speech|whisper|mel|conformer/i.test(`${e.hit} ${e.reason}`))) gaps.push('未看到 audio encoder / mel / whisper / conformer 強證據。');
+    } else if (c.id === 'txt2img') {
+      gaps.push('即使命中 diffusion 線索，也可能只是 UNet/DiT/VAE/text encoder 其中一個元件。');
+    } else if (c.id === 'text') {
+      if (!c.evidence.some(e => /chat_template/i.test(`${e.hit}`))) gaps.push('文字能力不等於 chat/instruct；需另外看 chat_template 或模型卡。');
+    }
+    if (!positives.length) positives.push('沒有找到正向證據。');
+    if (!gaps.length) gaps.push('沒有明顯反證；仍需 runtime 實測確認。');
+    return { id: c.id, label: c.label, state: c.classification.label, score: c.score, positives, gaps, caveat: c.caveat };
+  });
+}
+
+function evidenceText(items, max=3) {
+  if (!items || !items.length) return '沒有找到明確證據';
+  return items.slice(0, max).map(e => `${e.source}: ${e.hit}`).join('；');
+}
+
+function classifyScore(score) {
+  if (score >= 0.75) return { label: '高度可能', cls: 'confidence-high', level: 'high' };
+  if (score >= 0.45) return { label: '可能', cls: 'confidence-mid', level: 'medium' };
+  if (score >= 0.20) return { label: '弱證據', cls: 'confidence-low', level: 'low' };
+  return { label: '未看到明確證據', cls: 'confidence-none', level: 'none' };
+}
+
+function uniqueEvidence(evs) {
+  const seen = new Set();
+  const out = [];
+  for (const e of evs) {
+    const k = `${e.source}|${e.hit}|${e.reason}`;
+    if (!seen.has(k)) { seen.add(k); out.push(e); }
+  }
+  return out;
+}
+
+function collectScanText(r) {
+  const metaSmall = r.metadata.map(kv => `${kv.key}=${String(kv.display).slice(0, 300)}`).join('\n');
+  const tensorNames = r.tensors.map(t => t.name).join('\n');
+  const filename = r.file.name || '';
+  return { metaSmall, tensorNames, filename, all: `${filename}\n${metaSmall}\n${tensorNames}`.toLowerCase() };
+}
+
+function countMatches(text, re) {
+  const m = text.match(re);
+  return m ? m.length : 0;
+}
+
+function hitSamples(lines, re, limit=5) {
+  const out = [];
+  for (const line of lines) {
+    if (re.test(line)) out.push(line);
+    re.lastIndex = 0;
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function addCapabilityRule(cap, condition, score, source, hit, reason) {
+  if (!condition) return;
+  cap.score += score;
+  cap.evidence.push({ source, hit, reason, weight: score });
+}
+
+function scanCapabilities(r) {
+  const get = metadataLookup(r.metadata);
+  const arch = String(get('general.architecture') ?? '').toLowerCase();
+  const name = String(get('general.name') ?? get('general.basename') ?? r.file.name ?? '').toLowerCase();
+  const tokenizer = get('tokenizer.ggml.model');
+  const blockCount = arch ? get(`${arch}.block_count`) : undefined;
+  const txt = collectScanText(r);
+  const tensorLines = r.tensors.map(t => t.name);
+  const metaKeys = r.metadata.map(kv => kv.key);
+  const mk = metaKeys.join('\n').toLowerCase();
+  const tn = txt.tensorNames.toLowerCase();
+  const meta = txt.metaSmall.toLowerCase();
+
+  const caps = [
+    { id: 'text', label: '文字 / LLM', desc: '是否像一般語言模型，可處理文字 token。', score: 0, evidence: [] },
+    { id: 'vision', label: '圖片 / 視覺輸入', desc: '是否含 vision encoder、image projector、VLM 相關 metadata/tensor。', score: 0, evidence: [] },
+    { id: 'video', label: '影片 / 多幀視覺', desc: '是否有 video、frame、temporal 等多幀處理線索。', score: 0, evidence: [] },
+    { id: 'audio', label: '聲音 / 語音輸入', desc: '是否含 audio encoder、ASR、speech、mel/conformer/whisper 等線索。', score: 0, evidence: [] },
+    { id: 'txt2img', label: '文生圖 / Diffusion', desc: '是否像 Stable Diffusion / Flux / DiT / UNet / VAE 等生成圖片元件。', score: 0, evidence: [] }
+  ];
+  const byId = Object.fromEntries(caps.map(c => [c.id, c]));
+
+  const textBlockCount = countMatches(tn, /(^|\n)(blk|layers|model\.layers|transformer\.h)\.\d+\./g);
+  const tokenTensorCount = countMatches(tn, /(^|\n)(token_embd\.weight|output\.weight|.*embed.*tokens.*weight)/g);
+  addCapabilityRule(byId.text, tokenizer !== undefined, 0.35, 'metadata', 'tokenizer.ggml.model', '有 tokenizer metadata，通常表示可處理文字 token');
+  addCapabilityRule(byId.text, blockCount !== undefined, 0.25, 'metadata', `${arch}.block_count=${blockCount}`, '有 transformer block_count');
+  addCapabilityRule(byId.text, textBlockCount > 0, 0.30, 'tensor', `text blocks × ${textBlockCount}`, '找到文字 backbone 常見 layer tensor');
+  addCapabilityRule(byId.text, tokenTensorCount > 0, 0.15, 'tensor', `token embedding/output × ${tokenTensorCount}`, '找到 token embedding 或 output tensor');
+
+  const visionNameRe = /(vision|visual|vlm|qwen.*vl|qwen.*omni|gemma[-_ ]?3|gemma[-_ ]?4|smolvlm|pixtral|internvl|moondream|llava|clip|siglip|image)/i;
+  const visionTensorRe = /(^|[\.\/])(v\.blk|vision|visual|vision_tower|mmproj|multi_modal|multimodal|projector|clip|siglip|image|patch[_\.-]?emb|img[_\.-]?emb)/i;
+  const visionMetaRe = /(vision|visual|mmproj|multimodal|image|clip|siglip|projector)/i;
+  const visionSamples = hitSamples(tensorLines, visionTensorRe, 6);
+  addCapabilityRule(byId.vision, visionNameRe.test(`${arch} ${name}`), 0.30, 'name/architecture', `${arch || '(no arch)'} ${name}`, '名稱或架構含 VLM/vision 關鍵字');
+  addCapabilityRule(byId.vision, visionSamples.length > 0, 0.45, 'tensor', visionSamples.join(' | '), 'tensor 名稱含 vision/projector/patch embedding 線索');
+  addCapabilityRule(byId.vision, visionMetaRe.test(mk) || visionMetaRe.test(meta), 0.25, 'metadata', 'vision/mmproj/image key/value', 'metadata 內含視覺相關鍵值');
+
+  const videoNameRe = /(video|temporal|frame|smolvlm2.*video|omni)/i;
+  const videoTensorRe = /(video|temporal|frame[_\.-]?emb|time[_\.-]?emb|motion|3d[_\.-]?(conv|attn)|spatiotemporal)/i;
+  const videoSamples = hitSamples(tensorLines, videoTensorRe, 6);
+  addCapabilityRule(byId.video, videoNameRe.test(`${arch} ${name} ${meta}`), 0.45, 'name/metadata', `${arch || ''} ${name}`, '名稱或 metadata 有 video/temporal/frame 線索');
+  addCapabilityRule(byId.video, videoSamples.length > 0, 0.45, 'tensor', videoSamples.join(' | '), 'tensor 名稱含影片/時間維度線索');
+  addCapabilityRule(byId.video, byId.vision.score >= 0.75 && /video/i.test(name), 0.15, 'inference', 'vision + video model name', '有視覺證據且模型名稱明確含 video');
+
+  const audioNameRe = /(audio|speech|asr|ultravox|voxtral|whisper|qwen.*audio|qwen3[-_ ]?asr|seallm.*audio|omni)/i;
+  const audioTensorRe = /(^|[\.\/])(audio|speech|whisper|mel|conformer|acoustic|sound|a\.blk|audio_tower|audio_encoder|encoder\.conv|conv_subsample)/i;
+  const audioSamples = hitSamples(tensorLines, audioTensorRe, 6);
+  addCapabilityRule(byId.audio, audioNameRe.test(`${arch} ${name} ${meta}`), 0.45, 'name/metadata', `${arch || ''} ${name}`, '名稱或 metadata 有 audio/speech/ASR/Omni 線索');
+  addCapabilityRule(byId.audio, audioSamples.length > 0, 0.45, 'tensor', audioSamples.join(' | '), 'tensor 名稱含 audio encoder / mel / conformer / whisper 線索');
+  addCapabilityRule(byId.audio, /audio|speech|asr|whisper/.test(mk), 0.20, 'metadata', 'audio/speech/asr key', 'metadata key 含聲音相關字樣');
+
+  const t2iNameRe = /(stable[-_ ]?diffusion|sdxl|sd\d|flux|qwen[-_ ]?image|diffusion|unet|vae|mmdit|dit|text[-_ ]?to[-_ ]?image|txt2img|image[-_ ]?gen)/i;
+  const t2iTensorRe = /(diffusion_model|model\.diffusion|unet|vae|first_stage_model|cond_stage_model|denoiser|double_blocks\.|single_blocks\.|time_in\.|vector_in\.|final_layer\.|img_in\.|txt_in\.|mmdit)/i;
+  const t2iSamples = hitSamples(tensorLines, t2iTensorRe, 8);
+  addCapabilityRule(byId.txt2img, t2iNameRe.test(`${arch} ${name} ${meta}`), 0.45, 'name/metadata', `${arch || ''} ${name}`, '名稱或 metadata 有 diffusion/Flux/SD/UNet/VAE 線索');
+  addCapabilityRule(byId.txt2img, t2iSamples.length > 0, 0.45, 'tensor', t2iSamples.join(' | '), 'tensor 名稱像 diffusion / Flux / UNet / VAE 元件');
+  addCapabilityRule(byId.txt2img, /stable[-_ ]?diffusion|flux|vae|unet|diffusion/.test(mk), 0.20, 'metadata', 'diffusion/unet/vae key', 'metadata key 含圖像生成相關字樣');
+
+  for (const c of caps) {
+    c.score = Math.min(1, c.score);
+    c.evidence = uniqueEvidence(c.evidence).sort((a, b) => b.weight - a.weight);
+    c.classification = classifyScore(c.score);
+    c.caveat = capabilityCaveat(c.id, c);
+  }
+  return { caps, notes: buildCapabilityNotes(caps, r) };
+}
+
+function capabilityCaveat(id, c) {
+  if (id === 'txt2img') return c.score >= 0.45 ? '可能只是文生圖 pipeline 的其中一個 GGUF 元件；完整生成通常還需要 text encoder / VAE / scheduler。' : '沒有 diffusion/UNet/Flux 類證據，不能推定可文生圖。';
+  if (id === 'video') return c.score >= 0.45 ? '看到影片/時間線索，但是否真的能吃影片取決於執行器與 prompt/input 封裝。' : '一般圖片 VLM 不等於影片模型；多張圖片能力也不等於原生影片理解。';
+  if (id === 'vision') return c.score >= 0.45 ? '若這是 base LLM 檔，可能還需要獨立 mmproj/projector GGUF 才能真正吃圖片。' : '沒有 vision projector/encoder 證據，不能只靠模型名字硬判定。';
+  if (id === 'audio') return c.score >= 0.45 ? '聲音支援常依賴特定前處理與 multimodal runtime；GGUF 只能提供結構線索。' : '沒有 audio encoder/ASR 證據，不能推定可聽聲音。';
+  return c.score >= 0.45 ? '可處理文字的證據較強，但是否為 chat/instruct 仍要看 chat_template 或模型卡。' : '缺 tokenizer 或 text block 證據，可能不是一般 LLM。';
+}
+
+function buildCapabilityNotes(caps, r) {
+  const notes = [];
+  const get = metadataLookup(r.metadata);
+  const arch = get('general.architecture');
+  if (!get('tokenizer.chat_template')) notes.push('未看到 tokenizer.chat_template；即使是文字模型，也不能直接推定是 chat/instruct 格式。');
+  if (caps.find(c => c.id === 'vision')?.score >= 0.45 && !/mmproj|projector/i.test(r.file.name) && !r.tensors.some(t => /mmproj|projector/i.test(t.name))) notes.push('有視覺線索但未明確看到 mmproj/projector；若是 llama.cpp workflow，可能仍需搭配獨立 mmproj 檔。');
+  if (caps.find(c => c.id === 'txt2img')?.score >= 0.45) notes.push('文生圖 GGUF 常只是 diffusion transformer / UNet / text encoder / VAE 的某個元件；單檔不一定是完整 pipeline。');
+  if (arch) notes.push(`general.architecture=${arch}`);
+  return notes;
+}
+
+function componentFromName(name) {
+  const rules = [
+    [/attn[_\.-]?(q|query)/i, 'attn_q'], [/attn[_\.-]?(k|key)/i, 'attn_k'], [/attn[_\.-]?(v|value)/i, 'attn_v'], [/attn[_\.-]?(o|out|output)/i, 'attn_out'],
+    [/attention/i, 'attention'], [/ffn[_\.-]?gate|mlp.*gate/i, 'ffn_gate'], [/ffn[_\.-]?up|mlp.*up/i, 'ffn_up'], [/ffn[_\.-]?down|mlp.*down/i, 'ffn_down'], [/ffn|mlp|feed_forward/i, 'ffn/mlp'],
+    [/norm/i, 'norm'], [/rope|rotary/i, 'rope'], [/embed|embd|patch/i, 'embedding'], [/conv/i, 'conv'], [/time|temporal|frame/i, 'time/temporal'], [/vae|decoder|encoder/i, 'encoder/decoder']
+  ];
+  for (const [re, lab] of rules) if (re.test(name)) return lab;
+  return 'other';
+}
+
+function layerMatch(name) {
+  const patterns = [
+    { re: /^blk\.(\d+)\.(.*)$/i, group: 'blk', modality: 'text' },
+    { re: /^v\.blk\.(\d+)\.(.*)$/i, group: 'v.blk', modality: 'vision' },
+    { re: /^(?:model\.)?layers\.(\d+)\.(.*)$/i, group: 'layers', modality: 'text' },
+    { re: /^transformer\.h\.(\d+)\.(.*)$/i, group: 'transformer.h', modality: 'text' },
+    { re: /^(?:model\.)?encoder\.layers\.(\d+)\.(.*)$/i, group: 'encoder.layers', modality: 'audio/text' },
+    { re: /^(?:model\.)?decoder\.layers\.(\d+)\.(.*)$/i, group: 'decoder.layers', modality: 'text' },
+    { re: /^(?:visual|vision_tower|vision_model|v)\.(?:blocks|layers)\.(\d+)\.(.*)$/i, group: 'vision.blocks', modality: 'vision' },
+    { re: /^(?:audio|audio_encoder|a)\.(?:blocks|layers|blk)\.(\d+)\.(.*)$/i, group: 'audio.blocks', modality: 'audio' },
+    { re: /^double_blocks\.(\d+)\.(.*)$/i, group: 'double_blocks', modality: 'image-gen' },
+    { re: /^single_blocks\.(\d+)\.(.*)$/i, group: 'single_blocks', modality: 'image-gen' },
+    { re: /^transformer_blocks\.(\d+)\.(.*)$/i, group: 'transformer_blocks', modality: 'image-gen/vision' },
+    { re: /^(?:model\.diffusion_model\.|diffusion_model\.)?input_blocks\.(\d+)\.(.*)$/i, group: 'unet.input_blocks', modality: 'image-gen' },
+    { re: /^(?:model\.diffusion_model\.|diffusion_model\.)?middle_block\.(\d+)\.(.*)$/i, group: 'unet.middle_block', modality: 'image-gen' },
+    { re: /^(?:model\.diffusion_model\.|diffusion_model\.)?output_blocks\.(\d+)\.(.*)$/i, group: 'unet.output_blocks', modality: 'image-gen' }
+  ];
+  for (const p of patterns) {
+    const m = name.match(p.re);
+    if (m) return { group: p.group, layer: Number(m[1]), rest: m[2] || '', modality: p.modality };
+  }
+  return null;
+}
+
+function analyzeLayers(r) {
+  const groups = new Map();
+  let ungrouped = 0;
+  let ungroupedBytes = 0;
+  for (const t of r.tensors) {
+    const m = layerMatch(t.name);
+    if (!m) { ungrouped++; ungroupedBytes += t.bytes || 0; continue; }
+    const key = `${m.group}:${m.layer}`;
+    if (!groups.has(key)) groups.set(key, { key, group: m.group, layer: m.layer, modality: m.modality, count: 0, bytes: 0, elements: 0, typeStats: new Map(), components: new Map(), componentSamples: new Map(), sampleTensors: [] });
+    const g = groups.get(key);
+    g.count += 1;
+    g.bytes += t.bytes || 0;
+    g.elements += t.elements || 0;
+    g.typeStats.set(t.typeName, (g.typeStats.get(t.typeName) || 0) + 1);
+    const comp = componentFromName(m.rest || t.name);
+    const roleCategory = t.role?.category || comp;
+    const roleLabel = t.role ? `${t.role.zh} / ${t.role.en}` : comp;
+    const compKey = roleCategory === 'unknown' ? comp : roleCategory;
+    g.components.set(compKey, (g.components.get(compKey) || 0) + 1);
+    if (!g.componentSamples.has(compKey)) g.componentSamples.set(compKey, { key: compKey, label: roleLabel, examples: [] });
+    const cs = g.componentSamples.get(compKey);
+    if (cs.examples.length < 4) cs.examples.push(t.name);
+    if (g.sampleTensors.length < 5) g.sampleTensors.push(t.name);
+  }
+  const rows = [...groups.values()].map(g => {
+    const typeStats = [...g.typeStats.entries()].sort((a,b) => b[1] - a[1]);
+    const comps = [...g.components.entries()].sort((a,b) => b[1] - a[1]);
+    const componentTree = [...g.componentSamples.values()].sort((a,b) => (g.components.get(b.key)||0) - (g.components.get(a.key)||0)).map(x => ({ ...x, count: g.components.get(x.key) || 0 }));
+    return { ...g, dominantType: typeStats[0]?.[0] || '-', typeSummary: typeStats.map(([k,v]) => `${k}:${v}`).join(', '), componentsText: comps.map(([k,v]) => `${k}:${v}`).join(', '), componentTree };
+  }).sort((a,b) => a.group.localeCompare(b.group) || a.layer - b.layer);
+  const byGroup = new Map();
+  for (const row of rows) {
+    const s = byGroup.get(row.group) || { group: row.group, count: 0, bytes: 0, min: row.layer, max: row.layer };
+    s.count += 1; s.bytes += row.bytes; s.min = Math.min(s.min, row.layer); s.max = Math.max(s.max, row.layer);
+    byGroup.set(row.group, s);
+  }
+  return { rows, groups: [...byGroup.values()].sort((a,b) => a.group.localeCompare(b.group)), ungrouped, ungroupedBytes };
+}
+
+function render(result) {
+  lastResult = result;
+  $('result').classList.remove('hidden');
+  $('exportJsonBtn').disabled = false;
+  $('exportTensorCsvBtn').disabled = false;
+  $('exportMetaCsvBtn').disabled = false;
+  $('exportScanJsonBtn').disabled = false;
+  $('parseTime').textContent = `解析 ${result.derived.parseMs.toFixed(0)} ms`;
+  renderSummary(result);
+  renderModelInfo(result);
+  renderCapabilityScan(result);
+  renderModelComposition(result);
+  renderLayerTree(result);
+  renderLayers(result);
+  renderWeightInspector(result);
+  renderMetadata(result);
+  renderTensors(result);
+  renderChart(result.typeStats);
+}
+
+function renderSummary(r) {
+  const stats = [
+    ['檔案大小', 'File size', formatBytes(r.file.size), r.file.name],
+    ['GGUF 版本', 'GGUF version', `v${r.header.version}`, `${r.header.endian}-endian`],
+    ['Metadata 中繼資料', 'Metadata', formatInt(r.header.metadataCount), `header+metadata+tensor info ≈ ${formatBytes(r.derived.overheadBytes)}`],
+    ['Tensors 張量', 'Tensors', formatInt(r.header.tensorCount), `tensor data 起點：${formatInt(r.header.tensorDataStart)}`],
+    ['對齊', 'Alignment', `${r.header.alignment} bytes`, `padding：${formatBytes(r.header.paddingBytes)}`],
+    ['估算參數量', 'Estimated parameters', formatInt(r.derived.totalElements), '由 tensor shape 相乘加總'],
+    ['Tensor 區大小', 'Tensor data size', formatBytes(r.derived.tensorBytes), `${(r.derived.tensorBytes / Math.max(1, r.file.size) * 100).toFixed(2)}% of file`],
+    ['平均 bits/element', 'Average bits/element', r.derived.totalElements ? (r.derived.tensorBytes * 8 / r.derived.totalElements).toFixed(3) : '-', '粗估，混合量化時僅供比較'],
+    ['Layer groups 分組', 'Layer groups', formatInt(r.layerScan?.rows?.length ?? 0), `未分組 tensors：${formatInt(r.layerScan?.ungrouped ?? 0)}`],
+    ['能力掃描', 'Capability scan', (r.capabilityScan?.caps || []).filter(c => c.score >= 0.45).map(c => c.label.split(' / ')[0]).join('、') || '未見強證據', '啟發式推斷，需用執行器驗證']
+  ];
+  $('summaryStats').innerHTML = stats.map(([zh, en, value, hint]) => `
+    <div class="stat"><div class="label">${biLabel(zh, en)}</div><div class="value">${escapeHtml(value)}</div><div class="hint">${escapeHtml(hint)}</div></div>
+  `).join('');
+
+  const get = metadataLookup(r.metadata);
+  const keys = [
+    ['architecture', get('general.architecture')], ['name', get('general.name')], ['basename', get('general.basename')],
+    ['size_label', get('general.size_label')], ['file_type', ftypeText(get('general.file_type'))],
+    ['tokenizer', get('tokenizer.ggml.model')], ['ctx', get(`${get('general.architecture')}.context_length`)]
+  ].filter(x => x[1] !== undefined);
+  const warnings = r.warnings.map(w => ['警告', w]);
+  $('keyChips').innerHTML = [...keys, ...warnings].map(([k, v]) => `<span class="chip ${k === '警告' ? 'warn' : ''}">${escapeHtml(k)}: <span class="mono">${escapeHtml(stringifyValue(v))}</span></span>`).join('');
+}
+
+function ftypeText(v) {
+  if (v === undefined) return undefined;
+  const n = typeof v === 'bigint' ? Number(v) : v;
+  return `${v} ${FTYPE_NAMES[n] ? '(' + FTYPE_NAMES[n] + ')' : ''}`;
+}
+
+function renderModelInfo(r) {
+  const get = metadataLookup(r.metadata);
+  const arch = get('general.architecture');
+  const rows = [
+    ['general.name', get('general.name')],
+    ['general.basename', get('general.basename')],
+    ['general.architecture', arch],
+    ['general.size_label', get('general.size_label')],
+    ['general.file_type', ftypeText(get('general.file_type'))],
+    ['tokenizer.ggml.model', get('tokenizer.ggml.model')],
+    [`${arch}.context_length`, arch ? get(`${arch}.context_length`) : undefined],
+    [`${arch}.embedding_length`, arch ? get(`${arch}.embedding_length`) : undefined],
+    [`${arch}.block_count`, arch ? get(`${arch}.block_count`) : undefined],
+    [`${arch}.attention.head_count`, arch ? get(`${arch}.attention.head_count`) : undefined],
+    [`${arch}.attention.head_count_kv`, arch ? get(`${arch}.attention.head_count_kv`) : undefined],
+    [`${arch}.rope.freq_base`, arch ? get(`${arch}.rope.freq_base`) : undefined]
+  ].filter(x => x[1] !== undefined);
+  $('modelInfoTable').innerHTML = `<thead><tr><th>${biLabel('欄位', 'Key')}</th><th>${biLabel('值', 'Value')}</th></tr></thead><tbody>${rows.map(([k,v]) => `<tr><td class="mono muted">${escapeHtml(k)}</td><td class="mono">${escapeHtml(stringifyValue(v))}</td></tr>`).join('')}</tbody>`;
+}
+
+function uniqueSorted(arr) { return [...new Set(arr)].sort((a,b) => String(a).localeCompare(String(b))); }
+
+
+function renderCapabilityScan(r) {
+  const scan = r.capabilityScan;
+  if (!scan) return;
+  $('capabilityCards').innerHTML = scan.caps.map(c => `
+    <div class="cap-card">
+      <div class="cap-title"><span>${escapeHtml(c.label)}</span><span class="cap-score">${Math.round(c.score * 100)}%</span></div>
+      <div class="cap-state ${c.classification.cls}">${escapeHtml(c.classification.label)}</div>
+      <div class="cap-reason">${escapeHtml(evidenceText(c.evidence, 2))}</div>
+      <div class="cap-reason"><span class="bi"><span class="zh">限制</span><span class="en">Caveat</span></span>：${escapeHtml(c.caveat)}</div>
+    </div>
+  `).join('');
+  $('capabilitySummary').innerHTML = scan.notes.map(n => `<span class="mini-stat">${escapeHtml(n)}</span>`).join('');
+  const rows = [];
+  for (const c of scan.caps) for (const ev of c.evidence) rows.push({ cap: c.label, state: c.classification.label, ...ev });
+  const chains = r.capabilityEvidenceChains || buildCapabilityEvidenceChains(scan);
+  const chainHtml = chains.map(ch => `
+    <tr>
+      <td>${escapeHtml(ch.label)}</td>
+      <td>${escapeHtml(ch.state)} <span class="mono">${Math.round(ch.score*100)}%</span></td>
+      <td class="kv-value"><ul class="evidence-list">${ch.positives.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></td>
+      <td class="kv-value"><ul class="evidence-list">${ch.gaps.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></td>
+      <td class="kv-value">${escapeHtml(ch.caveat)}</td>
+    </tr>
+  `).join('');
+  $('capabilityTable').innerHTML = `<thead><tr><th>${biLabel('能力', 'Capability')}</th><th>${biLabel('判定', 'Assessment')}</th><th>${biLabel('證據鏈', 'Evidence chain')}</th><th>${biLabel('缺口 / 反證', 'Gaps / counter-signals')}</th><th>${biLabel('限制', 'Caveat')}</th></tr></thead><tbody>` +
+    (chainHtml || `<tr><td colspan="5" class="muted">沒有找到明確能力證據。</td></tr>`) +
+    `</tbody>`;
+}
+
+
+function renderModelComposition(r) {
+  const mc = r.modelComposition;
+  if (!mc) return;
+  $('compositionCards').innerHTML = mc.components
+    .filter(c => c.score >= 0.15)
+    .sort((a,b) => b.score - a.score)
+    .slice(0, 8)
+    .map(c => `
+      <div class="composition-card">
+        <div class="composition-title"><span>${biLabel(c.zh, c.en)}</span><span class="cap-score">${Math.round(c.score * 100)}%</span></div>
+        <div class="composition-state ${c.state.cls}">${escapeHtml(c.state.zh)} / ${escapeHtml(c.state.en)}</div>
+        <div class="composition-desc">${escapeHtml(c.desc)}</div>
+        <div class="composition-desc">${escapeHtml(evidenceText(c.evidence, 2))}</div>
+      </div>
+    `).join('') || '<div class="muted">沒有足夠組成線索。</div>';
+  $('compositionSummary').innerHTML = (mc.summary || []).map(x => `<span class="mini-stat">${escapeHtml(x)}</span>`).join('');
+  $('compositionTable').innerHTML = `<thead><tr><th>${biLabel('組成', 'Component')}</th><th>${biLabel('判定', 'Verdict')}</th><th>${biLabel('分數', 'Score')}</th><th>${biLabel('正向證據', 'Positive evidence')}</th><th>${biLabel('缺口 / 反證', 'Gaps / counter-signals')}</th><th>${biLabel('限制', 'Caveat')}</th></tr></thead><tbody>` +
+    mc.components.map(c => `<tr>
+      <td>${biLabel(c.zh, c.en)}</td>
+      <td class="${c.state.cls}">${escapeHtml(c.state.zh)} / ${escapeHtml(c.state.en)}</td>
+      <td class="mono">${Math.round(c.score * 100)}%</td>
+      <td class="mono kv-value">${escapeHtml(c.evidence.map(e => `${e.source}: ${e.hit} (${e.reason})`).join('\n') || '—')}</td>
+      <td class="kv-value">${escapeHtml((c.missing || []).join('\n') || '—')}</td>
+      <td class="kv-value">${escapeHtml(c.caveat || '—')}</td>
+    </tr>`).join('') + `</tbody>`;
+}
+
+function renderLayerTree(r) {
+  const scan = r.layerScan;
+  const groupSel = $('layerTreeGroupFilter');
+  groupSel.innerHTML = '<option value="">全部 group / All groups</option>' + scan.groups.map(g => `<option>${escapeHtml(g.group)}</option>`).join('');
+  const draw = () => {
+    const q = $('layerTreeSearch').value.trim().toLowerCase();
+    const gf = $('layerTreeGroupFilter').value;
+    const rows = scan.rows
+      .filter(g => (!gf || g.group === gf) && (!q || `${g.group}.${g.layer} ${g.modality} ${g.componentsText} ${g.sampleTensors.join(' ')} ${(g.componentTree||[]).map(c=>c.examples.join(' ')).join(' ')}`.toLowerCase().includes(q)))
+      .sort((a,b) => a.group.localeCompare(b.group) || a.layer - b.layer)
+      .slice(0, 160);
+    $('layerTree').innerHTML = rows.length ? rows.map(g => `
+      <details open class="tree-node">
+        <summary>
+          <span class="tree-line">
+            <span class="tree-title mono">${escapeHtml(g.group)}.${g.layer}</span>
+            <span class="tree-meta">${escapeHtml(g.modality)} · ${formatInt(g.count)} tensors · ${formatBytes(g.bytes)} · ${escapeHtml(g.dominantType)}</span>
+          </span>
+        </summary>
+        <div class="tree-children">
+          ${(g.componentTree || []).map(c => `
+            <div class="tree-node">
+              <div class="tree-line"><span class="tree-title">${escapeHtml(c.key)}</span><span class="tree-meta">${escapeHtml(c.label)} · ${formatInt(c.count)} tensors</span></div>
+              <div class="mono tree-meta">${escapeHtml(c.examples.join('\n'))}</div>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    `).join('') : '<div class="muted">沒有符合條件的 layer tree。</div>';
+  };
+  $('layerTreeSearch').oninput = draw;
+  $('layerTreeGroupFilter').onchange = draw;
+  draw();
+}
+
+function renderLayers(r) {
+  const scan = r.layerScan;
+  const groupSel = $('layerGroupFilter');
+  groupSel.innerHTML = '<option value="">全部 group / All groups</option>' + scan.groups.map(g => `<option>${escapeHtml(g.group)}</option>`).join('');
+  $('layerSummary').innerHTML = [
+    `分組 layer/block：${formatInt(scan.rows.length)}`,
+    `Namespace：${formatInt(scan.groups.length)}`,
+    `未分組 tensors：${formatInt(scan.ungrouped)} / ${formatBytes(scan.ungroupedBytes)}`,
+    ...scan.groups.slice(0, 8).map(g => `${g.group}: ${g.min}–${g.max} / ${formatBytes(g.bytes)}`)
+  ].map(x => `<span class="mini-stat">${escapeHtml(x)}</span>`).join('');
+  const draw = () => {
+    const q = $('layerSearch').value.trim().toLowerCase();
+    const gf = $('layerGroupFilter').value;
+    const sort = $('layerSort').value;
+    let rows = scan.rows.filter(g => (!gf || g.group === gf) && (!q || `${g.group}.${g.layer} ${g.modality} ${g.componentsText} ${g.typeSummary} ${g.sampleTensors.join(' ')}`.toLowerCase().includes(q)));
+    rows = rows.slice();
+    if (sort === 'bytes_desc') rows.sort((a,b) => b.bytes - a.bytes);
+    else if (sort === 'tensors_desc') rows.sort((a,b) => b.count - a.count);
+    else if (sort === 'group') rows.sort((a,b) => a.group.localeCompare(b.group) || a.layer - b.layer);
+    else rows.sort((a,b) => a.group.localeCompare(b.group) || a.layer - b.layer);
+    $('layerTable').innerHTML = `<thead><tr><th>${biLabel('操作', 'Action')}</th><th>${biLabel('群組', 'Group')}</th><th>${biLabel('層', 'Layer')}</th><th>${biLabel('推測模態', 'Inferred modality')}</th><th>${biLabel('Tensor 數', 'Tensors')}</th><th>${biLabel('大小', 'Bytes')}</th><th>${biLabel('主要型別', 'Dominant type')}</th><th>${biLabel('元件', 'Components')}</th><th>${biLabel('樣本 tensors', 'Sample tensors')}</th></tr></thead><tbody>` +
+      rows.map(g => `<tr>
+        <td><button class="tiny-btn layer-inspect-btn" data-layer-key="${escapeHtml(g.key)}">${biLabel('檢視本層', 'Inspect layer')}</button></td>
+        <td class="mono">${escapeHtml(g.group)}</td>
+        <td class="mono">${g.layer}</td>
+        <td>${escapeHtml(g.modality)}</td>
+        <td class="mono">${formatInt(g.count)}</td>
+        <td class="mono">${formatBytes(g.bytes)}</td>
+        <td class="mono">${escapeHtml(g.dominantType)}</td>
+        <td class="mono kv-value">${escapeHtml(g.componentsText)}</td>
+        <td class="mono kv-value">${escapeHtml(g.sampleTensors.join('\n'))}</td>
+      </tr>`).join('') + `</tbody>`;
+  };
+  $('layerSearch').oninput = draw;
+  $('layerGroupFilter').onchange = draw;
+  $('layerSort').onchange = draw;
+  draw();
+}
+
+function renderMetadata(r) {
+  const typeSel = $('metaTypeFilter');
+  typeSel.innerHTML = '<option value="">全部型別 / All types</option>' + uniqueSorted(r.metadata.map(x => x.typeName)).map(t => `<option>${escapeHtml(t)}</option>`).join('');
+  const draw = () => {
+    const q = $('metaSearch').value.trim().toLowerCase();
+    const tf = $('metaTypeFilter').value;
+    const rows = r.metadata.filter(kv => (!tf || kv.typeName === tf) && (!q || kv.key.toLowerCase().includes(q) || kv.display.toLowerCase().includes(q)));
+    $('metadataTable').innerHTML = `<thead><tr><th>${biLabel('#', 'Index')}</th><th>${biLabel('鍵', 'Key')}</th><th>${biLabel('型別', 'Type')}</th><th>${biLabel('值 / 預覽', 'Value / Preview')}</th></tr></thead><tbody>` +
+      rows.map(kv => `<tr><td class="mono muted">${kv.index}</td><td class="mono">${escapeHtml(kv.key)}</td><td class="mono">${escapeHtml(kv.typeName)}</td><td class="kv-value mono">${escapeHtml(kv.display)}</td></tr>`).join('') +
+      `</tbody>`;
+  };
+  $('metaSearch').oninput = draw;
+  $('metaTypeFilter').onchange = draw;
+  draw();
+}
+
+function renderTensors(r) {
+  const typeSel = $('tensorTypeFilter');
+  typeSel.innerHTML = '<option value="">全部型別 / All types</option>' + uniqueSorted(r.tensors.map(x => x.typeName)).map(t => `<option>${escapeHtml(t)}</option>`).join('');
+  const draw = () => {
+    const q = $('tensorSearch').value.trim().toLowerCase();
+    const tf = $('tensorTypeFilter').value;
+    const sort = $('tensorSort').value;
+    let rows = r.tensors.filter(t => (!tf || t.typeName === tf) && (!q || `${t.name} ${t.shape} ${t.role?.category || ''} ${t.role?.zh || ''} ${t.role?.en || ''}`.toLowerCase().includes(q)));
+    rows = rows.slice();
+    if (sort === 'bytes_desc') rows.sort((a,b) => (b.bytes ?? 0) - (a.bytes ?? 0));
+    else if (sort === 'bytes_asc') rows.sort((a,b) => (a.bytes ?? 0) - (b.bytes ?? 0));
+    else if (sort === 'type') rows.sort((a,b) => a.typeName.localeCompare(b.typeName) || a.index - b.index);
+    else if (sort === 'name') rows.sort((a,b) => a.name.localeCompare(b.name));
+    else rows.sort((a,b) => a.index - b.index);
+
+    $('tensorTable').innerHTML = `<thead><tr><th>${biLabel('操作', 'Action')}</th><th>${biLabel('#', 'Index')}</th><th>${biLabel('名稱', 'Name')}</th><th>${biLabel('角色', 'Role')}</th><th>${biLabel('形狀', 'Shape')}</th><th>${biLabel('型別', 'Type')}</th><th>${biLabel('元素數', 'Elements')}</th><th>${biLabel('區段位元組', 'Segment Bytes')}</th><th>${biLabel('每元素位元', 'Bits/Elem')}</th><th>${biLabel('偏移', 'Offset')}</th></tr></thead><tbody>` +
+      rows.map(t => `<tr>
+        <td><button class="tiny-btn tensor-inspect-btn" data-tensor-index="${t.index}">${biLabel('展開', 'Expand')}</button></td>
+        <td class="mono muted">${t.index}</td>
+        <td class="mono">${escapeHtml(t.name)}</td>
+        <td><span class="role-badge"><span class="role-main">${escapeHtml(t.role?.zh || '未知')}</span><span class="role-sub">${escapeHtml(t.role?.en || 'Unknown')} · ${Math.round((t.role?.confidence || 0) * 100)}%</span><span class="role-sub">${escapeHtml(t.role?.category || '-')}</span></span></td>
+        <td class="mono">${escapeHtml(t.shape)}</td>
+        <td class="mono">${escapeHtml(t.typeName)}</td>
+        <td class="mono">${formatInt(t.elements)}</td>
+        <td class="mono">${formatBytes(t.bytes ?? 0)}</td>
+        <td class="mono">${t.bitsPerElementApprox ? t.bitsPerElementApprox.toFixed(3) : '-'}</td>
+        <td class="mono muted">${formatInt(t.offset)}</td>
+      </tr>`).join('') + `</tbody>`;
+  };
+  $('tensorSearch').oninput = draw;
+  $('tensorTypeFilter').onchange = draw;
+  $('tensorSort').onchange = draw;
+  draw();
+}
+
+function renderChart(typeStats) {
+  const canvas = $('typeChart');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const w = canvas.width, h = canvas.height;
+  const padL = 150, padR = 24, padT = 20, padB = 32;
+  const rows = typeStats.slice(0, 12);
+  const max = Math.max(1, ...rows.map(x => x.bytes));
+  ctx.font = '13px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#94a3b8';
+  if (!rows.length) { ctx.fillText('沒有 tensor 統計', 20, 40); return; }
+  const barH = Math.min(22, (h - padT - padB) / rows.length - 6);
+  rows.forEach((s, i) => {
+    const y = padT + i * ((h - padT - padB) / rows.length) + 8;
+    const bw = (w - padL - padR) * (s.bytes / max);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(s.typeName, 14, y + barH/2);
+    ctx.fillStyle = '#38bdf8';
+    roundRect(ctx, padL, y, bw, barH, 7); ctx.fill();
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillText(`${formatBytes(s.bytes)} / ${formatInt(s.count)} tensors`, padL + Math.min(bw + 8, w - padL - padR - 220), y + barH/2);
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, Math.abs(w)/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  $('fileName').textContent = `${file.name}｜${formatBytes(file.size)}`;
+  $('errorBox').classList.add('hidden');
+  $('result').classList.add('hidden');
+  $('exportJsonBtn').disabled = true;
+  $('exportTensorCsvBtn').disabled = true;
+  $('exportMetaCsvBtn').disabled = true;
+  $('exportScanJsonBtn').disabled = true;
+  const onProgress = (msg, pct) => {
+    $('status').textContent = msg;
+    if (pct != null) $('progressBar').style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  };
+  try {
+    const result = await parseGGUF(file, onProgress);
+    result._sourceFile = file;
+    render(result);
+    $('status').textContent = `完成：${file.name}`;
+    $('progressBar').style.width = '100%';
+  } catch (err) {
+    console.error(err);
+    $('errorBox').textContent = (err && err.stack) ? err.stack : String(err);
+    $('errorBox').classList.remove('hidden');
+    $('status').textContent = '解析失敗';
+  }
+}
+
+
+document.addEventListener('click', async (e) => {
+  const tensorBtn = e.target.closest?.('.tensor-inspect-btn');
+  if (tensorBtn) {
+    selectWeightTensor(tensorBtn.dataset.tensorIndex);
+    await loadSelectedWeightTensor();
+    return;
+  }
+  const layerBtn = e.target.closest?.('.layer-inspect-btn');
+  if (layerBtn && lastResult) {
+    $('weightLayerSelect').value = layerBtn.dataset.layerKey;
+    populateWeightTensorSelect(lastResult, layerBtn.dataset.layerKey);
+    document.getElementById('weightLayerSelect')?.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+});
+
+$('weightLayerSelect')?.addEventListener('change', e => {
+  if (!lastResult) return;
+  populateWeightTensorSelect(lastResult, e.target.value);
+});
+$('loadWeightBtn')?.addEventListener('click', loadSelectedWeightTensor);
+$('clearWeightBtn')?.addEventListener('click', () => {
+  $('weightTensorMeta').innerHTML = '';
+  $('weightWarnings').innerHTML = '<span class="mini-stat">已清空 / Cleared</span>';
+  $('weightNumeric').textContent = '尚未展開 tensor。你可以從 layer 下拉選單或 Tensor 表格的「展開」按鈕挑選。';
+  $('weightHex').textContent = '';
+  $('showNumericBtn').disabled = true;
+  $('showHexBtn').disabled = true;
+  $('copyWeightBtn').disabled = true;
+  setWeightView('numeric');
+});
+$('showNumericBtn')?.addEventListener('click', () => setWeightView('numeric'));
+$('showHexBtn')?.addEventListener('click', () => setWeightView('hex'));
+$('copyWeightBtn')?.addEventListener('click', async () => {
+  const txt = currentWeightView === 'numeric' ? $('weightNumeric').textContent : $('weightHex').textContent;
+  try { await navigator.clipboard.writeText(txt); $('weightWarnings').insertAdjacentHTML('beforeend', '<span class="mini-stat">已複製 / Copied</span>'); }
+  catch { downloadText('tensor-weight-preview.txt', txt); }
+});
+
+$('fileInput').addEventListener('change', e => handleFile(e.target.files[0]));
+const drop = $('drop');
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+
+$('exportJsonBtn').addEventListener('click', () => {
+  if (!lastResult) return;
+  const slim = {
+    file: lastResult.file,
+    header: lastResult.header,
+    derived: lastResult.derived,
+    warnings: lastResult.warnings,
+    typeStats: lastResult.typeStats,
+    capabilityScan: lastResult.capabilityScan,
+    capabilityEvidenceChains: lastResult.capabilityEvidenceChains,
+    modelComposition: lastResult.modelComposition,
+    tensorRoleStats: lastResult.tensorRoleStats,
+    layerScan: lastResult.layerScan,
+    metadata: lastResult.metadata.map(({index,key,typeName,display,arrayType,arrayCount}) => ({index,key,typeName,display,arrayType,arrayCount})),
+    tensors: lastResult.tensors.map(({index,name,shape,typeName,elements,bytes,bitsPerElementApprox,offset,absoluteOffset,role}) => ({index,name,shape,typeName,elements,bytes,bitsPerElementApprox,offset,absoluteOffset,role}))
+  };
+  downloadText(`${lastResult.file.name}.gguf-summary.json`, JSON.stringify(slim, null, 2), 'application/json;charset=utf-8');
+});
+
+$('exportTensorCsvBtn').addEventListener('click', () => {
+  if (!lastResult) return;
+  const head = ['index','name','role_category','role_zh','role_en','role_confidence','shape','type','elements','segment_bytes','bits_per_element_approx','relative_offset','absolute_offset'];
+  const rows = lastResult.tensors.map(t => [t.index,t.name,t.role?.category,t.role?.zh,t.role?.en,t.role?.confidence,t.shape,t.typeName,t.elements,t.bytes,t.bitsPerElementApprox,t.offset,t.absoluteOffset]);
+  downloadText(`${lastResult.file.name}.tensors.csv`, [head, ...rows].map(r => r.map(csvEscape).join(',')).join('\n'), 'text/csv;charset=utf-8');
+});
+
+$('exportMetaCsvBtn').addEventListener('click', () => {
+  if (!lastResult) return;
+  const head = ['index','key','type','value_preview'];
+  const rows = lastResult.metadata.map(kv => [kv.index, kv.key, kv.typeName, kv.display]);
+  downloadText(`${lastResult.file.name}.metadata.csv`, [head, ...rows].map(r => r.map(csvEscape).join(',')).join('\n'), 'text/csv;charset=utf-8');
+});
+
+$('exportScanJsonBtn').addEventListener('click', () => {
+  if (!lastResult) return;
+  const scan = { file: lastResult.file, header: lastResult.header, capabilityScan: lastResult.capabilityScan, capabilityEvidenceChains: lastResult.capabilityEvidenceChains, modelComposition: lastResult.modelComposition, tensorRoleStats: lastResult.tensorRoleStats, layerScan: lastResult.layerScan };
+  downloadText(`${lastResult.file.name}.capability-layer-scan.json`, JSON.stringify(scan, null, 2), 'application/json;charset=utf-8');
+});
+
+</script>
+</body>
+</html>
